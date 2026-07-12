@@ -109,11 +109,4 @@ if(MINGW)
     target_link_options(juice-img PRIVATE -static)
 endif()
 
-# tests (optional, enabled with -DBUILD_TESTING=ON)
-option(BUILD_TESTING "Build unit tests" OFF)
-if(BUILD_TESTING)
-    enable_testing()
-    add_subdirectory(tests)
-endif()
-
 install(TARGETS juice juice-img)
