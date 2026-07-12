@@ -399,8 +399,28 @@ static void emit_param(ByteWriter& out, const AstNode& node, const Config& cfg, 
         const auto& inner = node.children[0];
 
         if (inner.is_symbol()) {
-            // quoted SJIS integer like '33450
-            int sjis_int = std::stoi(inner.str_val);
+            const std::string& sym = inner.str_val;
+
+            // a stray 'br/'pg as a command arg means "end this command, then
+            // break/frame", same as a following (text-break)/(text-frame).
+            // emitting the cmd byte here lands it right after the other params.
+            if (sym == "br") {
+                out.emit(0xA5);
+                return;
+            }
+
+            if (sym == "pg") {
+                out.emit(0xA6);
+                return;
+            }
+
+            // otherwise it must be a quoted SJIS integer like '33450
+            if (sym.empty() || !(std::isdigit(static_cast<unsigned char>(sym[0])) || sym[0] == '-')) {
+                throw std::runtime_error("cannot encode quoted symbol '" + sym +
+                    " as a parameter (expected a number, 'br, or 'pg)");
+            }
+
+            int sjis_int = std::stoi(sym);
             auto pair = Charset::integer_to_sjis(sjis_int);
 
             if (pair.size() >= 2) {
