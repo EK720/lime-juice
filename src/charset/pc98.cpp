@@ -20,6 +20,17 @@
 
 // pc-98 charset definition
 // translated from _charset_pc98.rkt
+//
+// to add characters: register_sjis_mapping(sjis_int, U'x') maps a single SJIS
+// code to a unicode char (for encode and decode), register_kuten_range maps a whole
+// block at once.
+//
+// Important! if you're using the ADV engine and you add a character whose SJIS
+// lead byte is in the 0xEB-0xEF range, it gets processed as a game-specific
+// character which may not have a Unicode equivalent and thus decodes as (text-raw).
+// To force these characters to decode, bypass the sjis2+/gaiji path by removing
+// the '+' signs from the two 'chr-sjis2+' list calls in src/engine/adv/parser.cpp.
+// Note: May cause character encoding problems. hack at your own risk.
 
 void register_charset_pc98(Charset& cs) {
     // box drawing characters at kuten row 12, starting at column 4
