@@ -19,6 +19,7 @@
 #include "compiler.h"
 #include "../../byte_writer.h"
 #include "../../charset.h"
+#include "../../sexp_writer.h"
 #include "../../utf8.h"
 
 #include <stdexcept>
@@ -1254,6 +1255,13 @@ static void emit_stmt(ByteWriter& out, const AstNode& node, const Config& cfg, C
     // ── tagless lists: emit each child ──────────────────────────
 
     if (tag.empty()) {
+        // if the node has no children () or doesn't start with a list (e.g. unnamed commands like (cmd:209)),
+        // then it's probably a raw char/str/int value that leaked into the tag. reject it as invalid because
+        // it's syntactically meaningless.
+        if (node.children.empty() || !node.children[0].is_list()) {
+            throw std::runtime_error("node '" + SexpWriter().format(node) + "' does not start with a command or operator");
+        }
+
         for (const auto& child : node.children) {
             emit_param(out, child, cfg, cs);
         }
