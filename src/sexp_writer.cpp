@@ -43,7 +43,7 @@ SexpWriter::Style SexpWriter::get_style(const std::string& tag) const {
         return Style::Set;
     }
 
-    if (tag == "text" || tag == "str" || tag == "text-raw") {
+    if (tag == "text" || tag == "str" || tag == "text-raw" || tag == "gm-text") {
         return Style::Inline;
     }
 

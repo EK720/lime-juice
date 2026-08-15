@@ -166,6 +166,8 @@ void Config::set_engine(const std::string& name) {
         engine = EngineType::ADV;
     } else if (upper == "AI5WIN") {
         engine = EngineType::AI5WIN;
+    } else if (upper == "GM" || upper == "GENERAL-MESSAGE" || upper == "GENERAL_MESSAGE") {
+        engine = EngineType::GM;
     } else {
         throw std::runtime_error("unknown engine type: " + name);
     }

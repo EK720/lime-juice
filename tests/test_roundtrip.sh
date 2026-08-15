@@ -57,6 +57,7 @@ while IFS= read -r -d '' rkt; do
     ENGINE="ADV"
     if grep -q "engine 'AI5" "$rkt"; then ENGINE="AI5"; fi
     if grep -q "engine 'AI1" "$rkt"; then ENGINE="AI1"; fi
+    if grep -q "engine 'GM" "$rkt"; then ENGINE="GM"; fi
 
     EXTRA=""
     if grep -q "extraop #t" "$rkt"; then EXTRA="-E"; fi

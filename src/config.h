@@ -29,7 +29,8 @@ enum class EngineType {
     AI5,
     AI1,
     ADV,
-    AI5WIN
+    AI5WIN,
+    GM
 };
 
 // protagonist fusion specification

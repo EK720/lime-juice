@@ -24,5 +24,5 @@
 #include <vector>
 
 // detect engine type from raw MES file bytes
-// checks ADV signature (last 2 bytes FF FE), then AI5 dictionary offset, then AI1 fallback
+// checks ADV signature, General Message structure, AI5 dictionary structure, then AI1 fallback
 EngineType detect_engine(const std::vector<uint8_t>& bytes);

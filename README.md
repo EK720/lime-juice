@@ -10,13 +10,14 @@ A companion tool, **juice-img**, handles the image formats used by the same game
 
 ## Supported Engines
 
-Six engine versions were used across these games. Functionally, they fall into three distinct families:
+Several engine versions were used across these games. Juice currently supports four distinct families:
 
 | Family | Versions | Notes | Game list |
 |--------|----------|-------|-----------|
 | **AI1** | AI1, AI2 | Older engine with simpler bytecode. AI2 is functionally identical to AI1. | [AI1/AI2 games](https://vndb.org/r?q=&o=a&s=title&f=12fgAIfoAI2) |
 | **AI5** | AI4, AI5 | The most common engine. AI4 is functionally identical to AI5. | [AI4/AI5 games](https://vndb.org/r?q=&o=a&s=title&f=12foAI4foAI5) |
 | **ADV** | AI3, ADV | Advanced engine with segment-based structure. ADV forked from AI3; they are functionally equivalent. | [AI3/ADV games](https://vndb.org/r?f=fwADV98V-) |
+| **GM** | General Message | Partially understood PC-98 engine. Text is editable; unknown bytecode is preserved losslessly as `(raw ...)`. | |
 
 **AI5WIN**, a Windows port of AI5, also exists but is not currently supported by juice. It shares most of its bytecode format with AI5 but has some Windows-specific differences.
 
@@ -65,7 +66,7 @@ Settings from the preset are stored in the RKT file's `(meta ...)` block, so you
 
 | Flag | Description |
 |------|-------------|
-| `-e`, `--engine TYPE` | Engine type: `AI5` (default), `AI1`, `ADV`. Aliases: `AI2` maps to `AI1`, `AI4` maps to `AI5`, `AI5X` maps to `AI5` with `--dictbase D0 --extraop`. |
+| `-e`, `--engine TYPE` | Engine type: `AI5` (default), `AI1`, `ADV`, `GM`. Aliases: `AI2` maps to `AI1`, `AI4` maps to `AI5`, `AI5X` maps to `AI5` with `--dictbase D0 --extraop`. |
 | `-p`, `--preset NAME` | Apply a named game preset. Overrides engine, charset, and other defaults. See `--show-preset` for the full list. |
 
 ### Character Encoding
@@ -186,6 +187,11 @@ When compiling, juice reads settings from the `(meta ...)` block at the top of t
 (meta (engine 'AI5) (charset "pc98") (extraop #t))
 ```
 
+General Message scripts use `(engine 'GM)`. Their self-delimiting text records
+are written as `(gm-text MODE "...")`; bytecode whose instruction layout is not
+yet known is kept in `(raw ...)` nodes. Leave those raw nodes intact to retain a
+byte-exact round trip.
+
 ### Input/Output Handling
 
 - Accepts multiple input files. Glob patterns (`*`, `?`) are expanded automatically.
@@ -294,6 +300,7 @@ The GPA file may not have an embedded palette. Either provide one with `-p palet
 - [AI5 Scripting Reference](doc/scripting-ai5.md)
 - [AI1 Scripting Reference](doc/scripting-ai1.md)
 - [ADV Scripting Reference](doc/scripting-adv.md)
+- [General Message Scripting Notes](doc/scripting-gm.md)
 - [GP4 Image Format](doc/gp4-ada.md)
 - [GPC/GPA Image Format](doc/gpc-gpa.md)
 

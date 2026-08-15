@@ -28,6 +28,8 @@
 #include "engine/ai1/compiler.h"
 #include "engine/ai5/compiler.h"
 #include "engine/adv/compiler.h"
+#include "engine/gm/loader.h"
+#include "engine/gm/compiler.h"
 
 #include <filesystem>
 #include <fstream>
@@ -66,7 +68,7 @@ static void print_usage() {
     std::cerr << "  -f, --force         force overwrite output files" << std::endl;
     std::cerr << "  -o, --output PATH   output file path (default: input with swapped extension)" << std::endl;
     std::cerr << "  -p, --preset NAME   preset for a specific game; see --show-preset" << std::endl;
-    std::cerr << "  -e, --engine TYPE   engine type (AI5*, AI1, ADV)" << std::endl;
+    std::cerr << "  -e, --engine TYPE   engine type (AI5*, AI1, ADV, GM)" << std::endl;
     std::cerr << "  -C, --charset NAME  charset encoding (pc98*, english, europe, korean-..)" << std::endl;
     std::cerr << "  -D, --dictbase HEX  [AI5] dictionary base (80*, D0)" << std::endl;
     std::cerr << "  -E, --extraop       [AI5/ADV] support newer opcodes" << std::endl;
@@ -186,6 +188,8 @@ static void decompile_file(const std::string& path, Config& cfg, bool force,
             }
         } else if (cfg.engine == EngineType::AI1) {
             ast = ai1::load_mes(path, cfg);
+        } else if (cfg.engine == EngineType::GM) {
+            ast = gm::load_mes(path, cfg);
         } else {
             ast = ai5::load_mes(path, cfg);
         }
@@ -338,6 +342,8 @@ static void compile_file(const std::string& path, Config& cfg, bool force,
             compiled = ai1::compile_mes(ast, compile_cfg);
         } else if (compile_cfg.engine == EngineType::AI5) {
             compiled = ai5::compile_mes(ast, compile_cfg);
+        } else if (compile_cfg.engine == EngineType::GM) {
+            compiled = gm::compile_mes(ast, compile_cfg);
         } else {
             throw std::runtime_error("compiler not implemented for this engine");
         }
@@ -474,6 +480,7 @@ int main(int argc, char* argv[]) {
 
                 if (cfg.engine == EngineType::ADV) { engine_name = "ADV"; }
                 else if (cfg.engine == EngineType::AI1) { engine_name = "AI1"; }
+                else if (cfg.engine == EngineType::GM) { engine_name = "GM"; }
                 else { engine_name = "AI5"; }
 
                 print_color("b-cyan", "auto-engine: " + engine_name);
