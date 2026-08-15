@@ -10,9 +10,11 @@
 
 #include "loader.h"
 #include "opener.h"
+#include "walker.h"
 #include "../../charset.h"
 #include "../../utf8.h"
 
+#include <iterator>
 #include <optional>
 #include <vector>
 
@@ -125,9 +127,18 @@ AstNode make_dict(const std::vector<std::vector<int>>& dict, const Config& cfg,
     return AstNode::make_list("dict", std::move(entries));
 }
 
-void flush_raw(std::vector<AstNode>& nodes, std::vector<AstNode>& raw) {
+void append_span(std::vector<AstNode>& layout, size_t start, size_t end) {
+    layout.push_back(AstNode::make_list("span", {
+        AstNode::make_integer(static_cast<int32_t>(start)),
+        AstNode::make_integer(static_cast<int32_t>(end))
+    }));
+}
+
+void flush_raw(std::vector<AstNode>& nodes, std::vector<AstNode>& raw,
+               std::vector<AstNode>& layout, size_t start, size_t end) {
     if (!raw.empty()) {
         nodes.push_back(AstNode::make_list("raw", std::move(raw)));
+        append_span(layout, start, end);
         raw.clear();
     }
 }
@@ -150,27 +161,54 @@ AstNode load_mes(const std::string& path, Config& cfg) {
     }));
     nodes.push_back(make_dict(mes.dictionary, cfg, cs));
 
+    size_t code_base = 2 + mes.dictionary.size() * 2;
+    auto walk = walk_code(mes.code, code_base);
+    std::vector<AstNode> code_nodes;
+    std::vector<AstNode> layout;
     std::vector<AstNode> raw;
-    size_t pos = 0;
+    size_t raw_start = 0;
+    size_t raw_end = 0;
 
-    while (pos < mes.code.size()) {
-        auto text = parse_text(mes.code, pos, mes.dictionary, cs);
+    for (const auto& instruction : walk.instructions) {
+        size_t start = instruction.start - code_base;
+        size_t end = instruction.end - code_base;
+        auto text = instruction.opcode == 0x4a
+            ? parse_text(mes.code, start, mes.dictionary, cs)
+            : std::nullopt;
 
-        if (!text.has_value() || !cfg.decode) {
-            raw.push_back(AstNode::make_integer(mes.code[pos]));
-            pos++;
+        if (!text.has_value() || text->end != end || !cfg.decode) {
+            if (raw.empty()) {
+                raw_start = instruction.start;
+            }
+
+            for (size_t pos = start; pos < end; pos++) {
+                raw.push_back(AstNode::make_integer(mes.code[pos]));
+            }
+
+            raw_end = instruction.end;
             continue;
         }
 
-        flush_raw(nodes, raw);
-        nodes.push_back(AstNode::make_list("gm-text", {
+        flush_raw(code_nodes, raw, layout, raw_start, raw_end);
+        code_nodes.push_back(AstNode::make_list("gm-text", {
             AstNode::make_integer(text->mode),
             AstNode::make_string(text->text)
         }));
-        pos = text->end;
+        append_span(layout, instruction.start, instruction.end);
     }
 
-    flush_raw(nodes, raw);
+    flush_raw(code_nodes, raw, layout, raw_start, raw_end);
+
+    for (const auto& relocation : walk.relocations) {
+        layout.push_back(AstNode::make_list("reloc", {
+            AstNode::make_integer(static_cast<int32_t>(relocation.field)),
+            AstNode::make_integer(relocation.target)
+        }));
+    }
+
+    nodes.push_back(AstNode::make_list("gm-layout", std::move(layout)));
+    nodes.insert(nodes.end(), std::make_move_iterator(code_nodes.begin()),
+                 std::make_move_iterator(code_nodes.end()));
     return AstNode::make_list("mes", std::move(nodes));
 }
 

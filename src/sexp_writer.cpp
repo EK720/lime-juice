@@ -48,7 +48,7 @@ SexpWriter::Style SexpWriter::get_style(const std::string& tag) const {
     }
 
     // structural containers: one statement per line
-    if (tag == "mes" || tag == "seg*" || tag == "loop" ||
+    if (tag == "mes" || tag == "gm-layout" || tag == "seg*" || tag == "loop" ||
         tag == "<>" || tag == "<*>" || tag == "</>" || tag == "<+>" ||
         tag == "/" || tag == "//" || tag == "+" ||
         tag == "repeat") {

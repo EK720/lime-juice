@@ -15,10 +15,132 @@
 
 #include <stdexcept>
 #include <unordered_map>
+#include <vector>
 
 namespace gm {
 
 namespace {
+
+struct SourceSpan {
+    size_t start;
+    size_t end;
+};
+
+struct OutputSpan {
+    size_t start;
+    size_t end;
+};
+
+struct Relocation {
+    size_t field;
+    uint16_t target;
+};
+
+struct Layout {
+    bool present = false;
+    std::vector<SourceSpan> spans;
+    std::vector<Relocation> relocations;
+};
+
+size_t layout_integer(const AstNode& node, const std::string& what,
+                      size_t maximum) {
+    if (!node.is_integer() || node.int_val < 0 ||
+        static_cast<size_t>(node.int_val) > maximum) {
+        throw std::runtime_error("gm: " + what + " is out of range");
+    }
+
+    return static_cast<size_t>(node.int_val);
+}
+
+Layout read_layout(const AstNode& ast) {
+    Layout layout;
+
+    for (const auto& node : ast.children) {
+        if (!node.is_list("gm-layout")) {
+            continue;
+        }
+
+        if (layout.present) {
+            throw std::runtime_error("gm: multiple gm-layout nodes");
+        }
+
+        layout.present = true;
+
+        for (const auto& entry : node.children) {
+            if (entry.is_list("span") && entry.children.size() == 2) {
+                size_t start = layout_integer(entry.children[0], "span start", 0xffff);
+                size_t end = layout_integer(entry.children[1], "span end", 0x10000);
+
+                if (start >= end) {
+                    throw std::runtime_error("gm: layout span must be non-empty");
+                }
+
+                if (!layout.spans.empty() && layout.spans.back().end != start) {
+                    throw std::runtime_error("gm: layout spans must be contiguous");
+                }
+
+                layout.spans.push_back({start, end});
+            } else if (entry.is_list("reloc") && entry.children.size() == 2) {
+                size_t field = layout_integer(entry.children[0], "relocation field", 0xffff);
+                size_t target = layout_integer(entry.children[1], "relocation target", 0xffff);
+                layout.relocations.push_back({field, static_cast<uint16_t>(target)});
+            } else {
+                throw std::runtime_error("gm: malformed gm-layout entry");
+            }
+        }
+    }
+
+    return layout;
+}
+
+size_t remap_position(size_t source, const std::vector<SourceSpan>& old_spans,
+                      const std::vector<OutputSpan>& new_spans) {
+    for (size_t i = 0; i < old_spans.size(); i++) {
+        const auto& old_span = old_spans[i];
+
+        if (source < old_span.start || source >= old_span.end) {
+            continue;
+        }
+
+        size_t offset = source - old_span.start;
+        size_t old_size = old_span.end - old_span.start;
+        size_t new_size = new_spans[i].end - new_spans[i].start;
+
+        if (old_size != new_size && offset != 0) {
+            throw std::runtime_error(
+                "gm: relocation points inside a resized source node");
+        }
+
+        if (offset >= new_size) {
+            throw std::runtime_error("gm: relocation no longer fits its source node");
+        }
+
+        return new_spans[i].start + offset;
+    }
+
+    throw std::runtime_error("gm: relocation is outside the recorded source spans");
+}
+
+void apply_relocations(ByteWriter& out, const Layout& layout,
+                       const std::vector<OutputSpan>& output_spans) {
+    for (const auto& relocation : layout.relocations) {
+        size_t field = remap_position(relocation.field, layout.spans, output_spans);
+        size_t field_end = remap_position(relocation.field + 1,
+                                          layout.spans, output_spans);
+        size_t target = remap_position(relocation.target,
+                                       layout.spans, output_spans);
+
+        if (field_end != field + 1) {
+            throw std::runtime_error("gm: relocated control field is not contiguous");
+        }
+
+        if (target > 0xffff) {
+            throw std::runtime_error("gm: relocated control target exceeds 16 bits");
+        }
+
+        out.write_u16_le_at(field, static_cast<uint16_t>(target));
+    }
+}
 
 uint16_t pair_key(int first, int second) {
     return static_cast<uint16_t>((first << 8) | second);
@@ -163,14 +285,20 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
     Charset cs;
     cs.load(cfg.charset_name);
     auto dict = read_dict(ast, cs);
+    auto layout = read_layout(ast);
 
     ByteWriter out;
     emit_header(out, dict);
+    std::vector<OutputSpan> output_spans;
+    size_t span_index = 0;
 
     for (const auto& node : ast.children) {
-        if (node.is_list("meta") || node.is_list("dict")) {
+        if (node.is_list("meta") || node.is_list("dict") ||
+            node.is_list("gm-layout")) {
             continue;
         }
+
+        size_t output_start = out.size();
 
         if (node.is_list("raw")) {
             for (const auto& byte : node.children) {
@@ -185,6 +313,36 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
         } else {
             throw std::runtime_error("gm compiler: unsupported node: " + node.tag);
         }
+
+        size_t output_end = out.size();
+
+        if (layout.present) {
+            if (span_index >= layout.spans.size()) {
+                throw std::runtime_error("gm: more code nodes than layout spans");
+            }
+
+            const auto& source = layout.spans[span_index];
+
+            if (node.is_list("raw") &&
+                output_end - output_start != source.end - source.start) {
+                throw std::runtime_error("gm: raw nodes with layout metadata cannot change length");
+            }
+
+            output_spans.push_back({output_start, output_end});
+            span_index++;
+        }
+    }
+
+    if (layout.present) {
+        if (span_index != layout.spans.size()) {
+            throw std::runtime_error("gm: fewer code nodes than layout spans");
+        }
+
+        if (out.size() > 0x10000) {
+            throw std::runtime_error("gm: compiled file exceeds the 16-bit address space");
+        }
+
+        apply_relocations(out, layout, output_spans);
     }
 
     return out.take_data();

@@ -17,7 +17,7 @@ Several engine versions were used across these games. Juice currently supports f
 | **AI1** | AI1, AI2 | Older engine with simpler bytecode. AI2 is functionally identical to AI1. | [AI1/AI2 games](https://vndb.org/r?q=&o=a&s=title&f=12fgAIfoAI2) |
 | **AI5** | AI4, AI5 | The most common engine. AI4 is functionally identical to AI5. | [AI4/AI5 games](https://vndb.org/r?q=&o=a&s=title&f=12foAI4foAI5) |
 | **ADV** | AI3, ADV | Advanced engine with segment-based structure. ADV forked from AI3; they are functionally equivalent. | [AI3/ADV games](https://vndb.org/r?f=fwADV98V-) |
-| **GM** | General Message | Partially understood PC-98 engine. Text is editable; unknown bytecode is preserved losslessly as `(raw ...)`. | |
+| **GM** | General Message | Partially understood PC-98 engine. Text is editable with local control-target relocation; unknown bytecode is preserved losslessly as `(raw ...)`. | |
 
 **AI5WIN**, a Windows port of AI5, also exists but is not currently supported by juice. It shares most of its bytecode format with AI5 but has some Windows-specific differences.
 
@@ -189,8 +189,10 @@ When compiling, juice reads settings from the `(meta ...)` block at the top of t
 
 General Message scripts use `(engine 'GM)`. Their self-delimiting text records
 are written as `(gm-text MODE "...")`; bytecode whose instruction layout is not
-yet known is kept in `(raw ...)` nodes. Leave those raw nodes intact to retain a
-byte-exact round trip.
+yet semantic is kept in `(raw ...)` nodes. A generated `(gm-layout ...)` block
+records source spans and native local address fields, allowing the compiler to
+backpatch control targets when text changes length. Leave the layout and raw
+node lengths intact.
 
 ### Input/Output Handling
 
