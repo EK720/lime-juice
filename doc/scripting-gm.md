@@ -1,9 +1,12 @@
 # General Message scripting notes
 
 General Message (GM) is a PC-98 scripting engine with a file container that
-looks like AI5 but an incompatible instruction set. A valid GM file begins
-with a little-endian 16-bit code offset. The bytes between offset 2 and the
-code offset are two-byte Shift-JIS dictionary entries.
+looks like AI5 but an incompatible instruction set. This implementation is
+derived from and validated against *Fermion: Mirai kara no Houmonsha*'s General
+Message system-1 Rev.95:06:30 dialect; other titles and revisions have not yet
+been validated. A valid GM file begins with a little-endian 16-bit code offset.
+The bytes between offset 2 and the code offset are two-byte Shift-JIS dictionary
+entries.
 
 The interpreter dispatches opcodes `0x30` through `0x7f`. Juice structurally
 walks the complete instruction stream so it can distinguish instructions from
@@ -33,7 +36,7 @@ Mode 1 payload tokens are:
 | otherwise | raw two-byte Shift-JIS character |
 
 The two dictionary ranges address up to 168 entries. Mode 2 stores printable
-single-byte ASCII directly.
+single-byte ASCII directly and uses the same `04` newline control as mode 1.
 
 ## Layout and relocation metadata
 
@@ -84,3 +87,6 @@ and native local address fields. This permits translation, exact unchanged
 round trips, and changed-length relocation without claiming semantic names for
 the surrounding commands. Future opcode parsers can replace individual
 `(raw ...)` regions incrementally while retaining the same layout metadata.
+The structural layouts and relocation fields exercised by Fermion are validated
+across its corpus, but semantic opcode names beyond text and the
+scenario-loading commands above remain future work.

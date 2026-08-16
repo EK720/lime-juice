@@ -46,6 +46,11 @@ static size_t gm_text_end(const std::vector<uint8_t>& bytes, size_t start,
         uint8_t byte = bytes[pos];
 
         if (mode == 2) {
+            if (byte == 0x04) {
+                pos++;
+                continue;
+            }
+
             if (byte < 0x20 || byte > 0x7e) {
                 return 0;
             }

@@ -7,6 +7,14 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
 
 #include "compiler.h"
 #include "../../byte_writer.h"
@@ -338,15 +346,15 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
         }
     }
 
+    if (layout.present && span_index != layout.spans.size()) {
+        throw std::runtime_error("gm: fewer code nodes than layout spans");
+    }
+
+    if (out.size() > 0x10000) {
+        throw std::runtime_error("gm: compiled file exceeds the 16-bit address space");
+    }
+
     if (layout.present) {
-        if (span_index != layout.spans.size()) {
-            throw std::runtime_error("gm: fewer code nodes than layout spans");
-        }
-
-        if (out.size() > 0x10000) {
-            throw std::runtime_error("gm: compiled file exceeds the 16-bit address space");
-        }
-
         apply_relocations(out, layout, output_spans);
     }
 

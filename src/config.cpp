@@ -56,7 +56,10 @@ void Config::use_preset(const std::string& name) {
         return;
     }
 
-    if (lower == "angel") {
+    if (lower == "fermion") {
+        engine = EngineType::GM;
+
+    } else if (lower == "angel") {
         engine = EngineType::AI1;
     } else if (lower == "deja") {
         engine = EngineType::AI1;
@@ -246,6 +249,7 @@ std::vector<PresetInfo> get_presets() {
         {"dk3",    "Dragon Knight 3"},
         {"dk4",    "Dragon Knight 4"},
         {"elle",   "ELLE"},
+        {"fermion", "Fermion: Mirai kara no Houmonsha"},
         {"foxy",   "Foxy"},
         {"foxy2",  "Foxy 2"},
         {"isaku",  "Isaku"},
