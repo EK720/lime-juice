@@ -223,8 +223,13 @@ void emit_text(ByteWriter& out, const AstNode& node, const Charset& cs,
 
     if (mode == 2) {
         for (unsigned char byte : node.children[1].str_val) {
+            if (byte == '\n') {
+                out.emit(0x04);
+                continue;
+            }
+
             if (byte < 0x20 || byte > 0x7e) {
-                throw std::runtime_error("gm: mode 2 text only supports printable ASCII");
+                throw std::runtime_error("gm: mode 2 text only supports printable ASCII and newlines");
             }
 
             out.emit(byte);

@@ -51,6 +51,12 @@ std::optional<TextRecord> parse_text(const std::vector<uint8_t>& code, size_t st
         uint8_t byte = code[pos];
 
         if (mode == 2) {
+            if (byte == 0x04) {
+                text.push_back('\n');
+                pos++;
+                continue;
+            }
+
             if (byte < 0x20 || byte > 0x7e) {
                 return std::nullopt;
             }

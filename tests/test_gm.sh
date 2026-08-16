@@ -32,6 +32,14 @@ sed 's/(gm-text 2 "BS")/(gm-text 2 "BIGGER")/' \
 printf '%b' '\x06\x00\x82\xa0\x82\xa2\x6e\x11system.mll\x00\x00\x40\x2b\x00\x12\x79\x00\x4a\x01\x18\x19\x04\x82\xa4\x00\x4a\x02BIGGER\x00\x00' > "$TMP/expected.mes"
 cmp "$TMP/expected.mes" "$TMP/edited.mes"
 
+sed 's/(gm-text 2 "BS")/(gm-text 2 "B\\nS")/' \
+    "$TMP/output.rkt" > "$TMP/newline.rkt"
+"$JUICE" -c -f -o "$TMP/newline.mes" "$TMP/newline.rkt"
+printf '%b' '\x06\x00\x82\xa0\x82\xa2\x6e\x11system.mll\x00\x00\x40\x28\x00\x12\x79\x00\x4a\x01\x18\x19\x04\x82\xa4\x00\x4a\x02B\x04S\x00\x00' > "$TMP/expected-newline.mes"
+cmp "$TMP/expected-newline.mes" "$TMP/newline.mes"
+"$JUICE" -d -f --auto-engine -o "$TMP/newline-output.rkt" "$TMP/newline.mes"
+grep -q '(gm-text 2 "B\\nS")' "$TMP/newline-output.rkt"
+
 sed 's/(raw 110/(raw 0 110/' "$TMP/output.rkt" > "$TMP/bad-raw.rkt"
 "$JUICE" -c -f -o "$TMP/bad-raw.mes" "$TMP/bad-raw.rkt" \
     > "$TMP/bad-raw.log" 2>&1 || true
