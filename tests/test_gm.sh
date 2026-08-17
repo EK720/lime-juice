@@ -35,6 +35,19 @@ grep -q '(gm-text 2 "C\\nD")' "$TMP/heuristic.rkt"
 "$JUICE" -c -f -o "$TMP/heuristic-output.mes" "$TMP/heuristic.rkt"
 cmp "$TMP/heuristic.mes" "$TMP/heuristic-output.mes"
 
+# Growing an expression changes the size of the control instruction that owns
+# its address field. Semantic relocation records the newly emitted field
+# directly and moves the following instruction boundary from 0x08 to 0x09.
+printf '%b' '\x02\x00\x33\x08\x00\x01\x01\x00\x00' > "$TMP/expression.mes"
+"$JUICE" -d -f -e GM -o "$TMP/expression.rkt" "$TMP/expression.mes"
+grep -q '(gm-if (gm-address 8) (gm-expr (gm-imm 1 1)))' "$TMP/expression.rkt"
+sed 's/(gm-imm 1 1)/(gm-imm 2 1)/' \
+    "$TMP/expression.rkt" > "$TMP/expression-edited.rkt"
+"$JUICE" -c -f -o "$TMP/expression-edited.mes" "$TMP/expression-edited.rkt"
+printf '%b' '\x02\x00\x33\x09\x00\x02\x01\x00\x00\x00' \
+    > "$TMP/expected-expression.mes"
+cmp "$TMP/expected-expression.mes" "$TMP/expression-edited.mes"
+
 # Header: two dictionary entries (あ, い). Code contains the observed GM
 # SYSTEM.MLL loader signature, a call with a local continuation at 0x27 and an
 # external MLL target at 0x7912, mode-1 dictionary/raw text, and mode-2 ASCII.
