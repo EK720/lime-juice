@@ -56,7 +56,7 @@ void Config::use_preset(const std::string& name) {
         return;
     }
 
-    if (lower == "fermion") {
+    if (lower == "fermion" || lower == "beyond" || lower == "be-yond") {
         engine = EngineType::GM;
 
     } else if (lower == "angel") {
@@ -238,6 +238,7 @@ std::vector<PresetInfo> get_presets() {
     return {
         {"angel",  "Angel Hearts"},
         {"aishi",  "Ai Shimai"},
+        {"beyond", "Be-Yond: Kurodaishou ni Mirareteru"},
         {"cre",    "Crescent"},
         {"coc",    "Curse of Castle"},
         {"deja",   "De-Ja"},

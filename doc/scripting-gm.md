@@ -1,30 +1,57 @@
 # General Message scripting notes
 
 General Message (GM) is a PC-98 scripting engine with a file container that
-looks like AI5 but an incompatible instruction set. This implementation is
-derived from and validated against *Fermion: Mirai kara no Houmonsha*'s General
-Message system-1 Rev.95:06:30 dialect; other titles and revisions have not yet
-been validated. A valid GM file begins with a little-endian 16-bit code offset.
-The bytes between offset 2 and the code offset are two-byte Shift-JIS dictionary
-entries.
+resembles AI5 but an incompatible instruction set. Juice supports the system-1
+Rev.95:06:30 dialects used by *Fermion: Mirai kara no Houmonsha* and *Be-Yond:
+Kurodaishou ni Mirareteru*. The implementation has been validated with
+byte-exact round trips across both available MES corpora.
 
-The interpreter dispatches opcodes `0x30` through `0x7f`. Juice structurally
-walks the complete instruction stream so it can distinguish instructions from
-their payloads and identify local 16-bit control targets. Only text has a
-semantic AST node today; every other complete instruction is preserved
-byte-for-byte in `(raw ...)` nodes.
+A GM file begins with a little-endian 16-bit code offset. Bytes between offset
+2 and the code offset are two-byte Shift-JIS dictionary entries. Fermion
+dispatches opcodes `0x30` through `0x7f`; Be-Yond uses the same base table and
+six extensions, `0x80` through `0x85`.
+
+## Semantic form
+
+Every known command has a named `gm-*` node. For example:
+
+```racket
+(gm-if
+ (gm-address 1234)
+ (gm-expr (gm-ref 12 86) (gm-imm 1 32) bit-and (gm-imm 1 0) eq))
+(gm-assign
+ (gm-ref 12 100)
+ (gm-value (gm-expr (gm-imm 2 500))))
+(gm-mll-load (gm-string-bytes 115 121 115 116 101 109 46 109 108 108))
+```
+
+Expressions preserve the engine's postfix term stream rather than imposing a
+possibly incorrect higher-level tree:
+
+- `(gm-imm WIDTH VALUE)` is a literal and retains its encoded width.
+- `(gm-ref TOKEN OFFSET [INDEX-EXPR])` is a typed reference. Tokens `5` through
+  `10` carry the nested index expression.
+- `(gm-random LOW HIGH)` is the initial inclusive random-range operand.
+- `mul`, `div`, `mod`, `add`, `sub`, `bit-and`, `bit-or`, `eq`, `ne`, `lt`,
+  `le`, `gt`, `ge`, `logical-and`, and `logical-or` are native operators.
+- `(gm-expr)` is the engine's empty/default expression.
+
+Generic command arguments are represented as expressions,
+`(gm-string-bytes ...)`, or `(gm-ref-param (gm-ref ...))`. Byte strings remain
+explicit because filenames and driver payloads are engine bytes rather than
+necessarily Unicode text.
+
+The complete command vocabulary and an encodable representative of every base
+opcode and Be-Yond extension live in `tests/fixtures/gm-semantic.rkt`.
 
 ## Text (`0x4a`)
 
-Text records are self-delimiting and can be edited safely in files decompiled
-by a relocation-aware version of juice:
+Text remains directly editable:
 
 ```racket
 (gm-text 1 "Japanese text")
 (gm-text 2 "ASCII")
 ```
-
-The opcode is followed by a mode byte, the payload, and a zero terminator.
 
 Mode 1 payload tokens are:
 
@@ -35,58 +62,59 @@ Mode 1 payload tokens are:
 | `a0`-`df` | dictionary entry `token - 0x38` |
 | otherwise | raw two-byte Shift-JIS character |
 
-The two dictionary ranges address up to 168 entries. Mode 2 stores printable
-single-byte ASCII directly and uses the same `04` newline control as mode 1.
+Mode 2 stores printable ASCII and uses the same `04` newline control. When a
+source uses a non-canonical but valid spelling of the same text, juice adds a
+`gm-text-source` annotation. An unchanged text node then recompiles to the
+original bytes; appending text preserves the original prefix encoding.
 
 ## Layout and relocation metadata
 
-The decompiler writes a `gm-layout` node before the code nodes:
+The decompiler writes `gm-layout` before the code:
 
 ```racket
 (gm-layout
- (span 6 26)
+ (span 6 20)
+ (span 20 26)
  (span 26 34)
- (span 34 39)
- (span 39 40)
- (reloc 21 39))
+ (reloc 21 34))
 ```
 
-There is one source `span` for each following `raw` or `gm-text` node. A
-`reloc` records the absolute file offset of a local 16-bit address field and
-its old target. When text changes length, the compiler maps both positions
-through the spans and backpatches the new target. Targets that do not land on
-an instruction boundary in the same MES file, such as calls into an MLL
-module, are deliberately not rewritten.
+There is one source span per following code node. Semantic control operands use
+`(gm-address OLD-TARGET)`. During compilation their output fields are recorded
+as they are emitted, then local targets are mapped from old spans to new spans.
+This permits changed-length edits to text, expressions, parameter lists, and
+other semantic commands. Addresses outside the MES code range, such as MLL
+entry points, remain unchanged.
 
-Keep `gm-layout` and the order of the code nodes intact. Text nodes may change
-length. Raw nodes may be edited in place but cannot change length, because
-juice does not yet have a semantic representation from which to rebuild them.
-Older or hand-written GM source without `gm-layout` remains compilable, but it
-does not have enough provenance for safe changed-length edits.
+Keep `gm-layout` and code-node order intact when editing a decompiled file.
+Hand-written source without layout metadata is also valid, but its numeric
+addresses are emitted literally because there is no old-to-new mapping.
 
-## Scenario loading
+Legacy GM files containing `(raw ...)` nodes remain compilable. A raw node
+covered by layout metadata cannot change length; new decompilation output uses
+semantic nodes for every valid known instruction except undecodable text bytes.
 
-Three related commands have been identified:
+## Be-Yond extensions
 
-| Opcode | Behavior |
-|--------|----------|
-| `0x6d` | replace the current MES scenario |
-| `0x6e` | load an MLL module |
-| `0x6f` | call a nested MES scenario and then restore the caller |
+Be-Yond adds six commands beyond the Fermion table:
 
-String parameters use token `0x11`, followed by a zero-terminated filename;
-the parameter list itself ends with another zero. A common entry-script
-signature is therefore `6e 11 "system.mll" 00 00`, which juice also uses as a
-strong GM auto-detection marker.
+| Opcode | Node | Role |
+|--------|------|------|
+| `0x80` | `gm-beyond-flag-test` | test the engine flag used by its helper path |
+| `0x81` | `gm-beyond-mll-call` | call the Be-Yond MLL service with parameters |
+| `0x82` | `gm-beyond-bank` | choose and store a graphics bank |
+| `0x83` | `gm-for-end` | conditional FOR-end variant |
+| `0x84` | `gm-push-reference` | push a typed reference value |
+| `0x85` | `gm-pop-reference` | pop and store a typed reference value |
 
-## Current boundary
+The `0x84` and `0x85` reference operands are consumed by dispatcher posthooks,
+not by the tiny flag-setting handlers themselves. Each is encoded as a
+reference followed by two trailing bytes.
 
-Juice only gives semantic structure to `0x4a` text records today. The remaining
-opcode layouts are decoded only far enough to recover instruction boundaries
-and native local address fields. This permits translation, exact unchanged
-round trips, and changed-length relocation without claiming semantic names for
-the surrounding commands. Future opcode parsers can replace individual
-`(raw ...)` regions incrementally while retaining the same layout metadata.
-The structural layouts and relocation fields exercised by Fermion are validated
-across its corpus, but semantic opcode names beyond text and the
-scenario-loading commands above remain future work.
+## Validation
+
+`tests/test_gm.sh` checks detection, semantic compilation, text edits,
+relocation, legacy raw compatibility, and a synthetic representative of every
+known opcode slot. `tests/test_gm_corpus.sh` performs byte-exact no-op round
+trips and grows every mode-1 text record in a supplied corpus, then decompiles
+the changed result to validate relocated instruction boundaries.

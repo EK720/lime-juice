@@ -44,15 +44,17 @@ printf '%b' '\x06\x00\x82\xa0\x82\xa2\x6e\x11system.mll\x00\x00\x40\x27\x00\x12\
 grep -q "(engine 'GM)" "$TMP/output.rkt"
 grep -q '(gm-layout' "$TMP/output.rkt"
 grep -q '(reloc 21 39)' "$TMP/output.rkt"
-grep -q '(gm-text 1 "あい\\nう")' "$TMP/output.rkt"
+grep -q '(gm-mll-load (gm-string-bytes 115 121 115 116 101 109 46 109 108 108))' "$TMP/output.rkt"
+grep -q '(gm-text 1 "あい\\nう"' "$TMP/output.rkt"
 grep -q '(gm-text 2 "BS")' "$TMP/output.rkt"
+! grep -q '(raw ' "$TMP/output.rkt"
 
 "$JUICE" -c -f -o "$TMP/output.mes" "$TMP/output.rkt"
 cmp "$TMP/input.mes" "$TMP/output.mes"
 
 # Grow mode-1 text through both dictionary and raw Shift-JIS paths. The local
 # continuation moves by one byte while the external MLL target is unchanged.
-sed 's/(gm-text 1 "あい\\nう")/(gm-text 1 "あい\\nうあ")/' \
+sed 's/(gm-text 1 "あい\\nう"/(gm-text 1 "あい\\nうあ"/' \
     "$TMP/output.rkt" > "$TMP/mode1-edited.rkt"
 "$JUICE" -c -f -o "$TMP/mode1-edited.mes" "$TMP/mode1-edited.rkt"
 printf '%b' '\x06\x00\x82\xa0\x82\xa2\x6e\x11system.mll\x00\x00\x40\x28\x00\x12\x79\x00\x4a\x01\x18\x19\x04\x82\xa4\x18\x00\x4a\x02BS\x00\x00' > "$TMP/expected-mode1.mes"
@@ -61,6 +63,8 @@ cmp "$TMP/expected-mode1.mes" "$TMP/mode1-edited.mes"
 # The game preset selects GM without relying on auto-detection.
 "$JUICE" -d -f -p fermion -o "$TMP/preset.rkt" "$TMP/input.mes"
 grep -q "(engine 'GM)" "$TMP/preset.rkt"
+"$JUICE" -d -f -p beyond -o "$TMP/beyond-preset.rkt" "$TMP/input.mes"
+grep -q "(engine 'GM)" "$TMP/beyond-preset.rkt"
 
 sed 's/(gm-text 2 "BS")/(gm-text 2 "BIGGER")/' \
     "$TMP/output.rkt" > "$TMP/edited.rkt"
@@ -79,7 +83,13 @@ cmp "$TMP/expected-newline.mes" "$TMP/newline.mes"
 "$JUICE" -d -f --auto-engine -o "$TMP/newline-output.rkt" "$TMP/newline.mes"
 grep -q '(gm-text 2 "B\\nS")' "$TMP/newline-output.rkt"
 
-sed 's/(raw 110/(raw 0 110/' "$TMP/output.rkt" > "$TMP/bad-raw.rkt"
+awk 'BEGIN {
+    print "(mes"
+    print " (meta (engine '\''GM) (charset \"pc98\"))"
+    print " (dict)"
+    print " (gm-layout (span 2 4))"
+    print " (raw 0 0 0))"
+}' > "$TMP/bad-raw.rkt"
 "$JUICE" -c -f -o "$TMP/bad-raw.mes" "$TMP/bad-raw.rkt" \
     > "$TMP/bad-raw.log" 2>&1 || true
 
@@ -89,6 +99,18 @@ if [ -e "$TMP/bad-raw.mes" ]; then
 fi
 
 grep -q 'raw nodes with layout metadata cannot change length' "$TMP/bad-raw.log"
+
+# Every known base opcode and Be-Yond extension has a hand-written semantic
+# representative. Compile it, decompile it without raw fallback, and demand a
+# byte-exact second compilation.
+"$JUICE" -c -f -o "$TMP/semantic.mes" "$ROOT/tests/fixtures/gm-semantic.rkt"
+"$JUICE" -d -f -e GM -o "$TMP/semantic.rkt" "$TMP/semantic.mes"
+! grep -q '(raw ' "$TMP/semantic.rkt"
+grep -q '(gm-for-end ' "$TMP/semantic.rkt"
+grep -q '(gm-push-reference ' "$TMP/semantic.rkt"
+grep -q '(gm-pop-reference ' "$TMP/semantic.rkt"
+"$JUICE" -c -f -o "$TMP/semantic-roundtrip.mes" "$TMP/semantic.rkt"
+cmp "$TMP/semantic.mes" "$TMP/semantic-roundtrip.mes"
 
 # Hand-written GM sources have no layout metadata, but they still cannot exceed
 # the engine's 16-bit file-address space.

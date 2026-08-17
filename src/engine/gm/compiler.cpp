@@ -17,11 +17,13 @@
 //
 
 #include "compiler.h"
+#include "semantic.h"
 #include "../../byte_writer.h"
 #include "../../charset.h"
 #include "../../utf8.h"
 
 #include <stdexcept>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -37,6 +39,7 @@ struct SourceSpan {
 struct OutputSpan {
     size_t start;
     size_t end;
+    bool semantic;
 };
 
 struct Relocation {
@@ -132,6 +135,27 @@ size_t remap_position(size_t source, const std::vector<SourceSpan>& old_spans,
 void apply_relocations(ByteWriter& out, const Layout& layout,
                        const std::vector<OutputSpan>& output_spans) {
     for (const auto& relocation : layout.relocations) {
+        size_t source_index = layout.spans.size();
+
+        for (size_t i = 0; i < layout.spans.size(); i++) {
+            if (relocation.field >= layout.spans[i].start &&
+                relocation.field < layout.spans[i].end) {
+                source_index = i;
+                break;
+            }
+        }
+
+        if (source_index == layout.spans.size()) {
+            throw std::runtime_error(
+                "gm: relocation field is outside the recorded source spans");
+        }
+
+        // Semantic nodes record their fields while emitting and do not depend
+        // on the old byte offset within a potentially resized instruction.
+        if (output_spans[source_index].semantic) {
+            continue;
+        }
+
         size_t field = remap_position(relocation.field, layout.spans, output_spans);
         size_t field_end = remap_position(relocation.field + 1,
                                           layout.spans, output_spans);
@@ -150,8 +174,84 @@ void apply_relocations(ByteWriter& out, const Layout& layout,
     }
 }
 
+size_t remap_target(size_t target, const Layout& layout,
+                    const std::vector<OutputSpan>& output_spans) {
+    if (!layout.present) {
+        return target;
+    }
+
+    for (const auto& span : layout.spans) {
+        if (target >= span.start && target < span.end) {
+            return remap_position(target, layout.spans, output_spans);
+        }
+    }
+
+    return target;
+}
+
+void apply_semantic_relocations(
+    ByteWriter& out, const std::vector<SemanticRelocation>& relocations,
+    const Layout& layout, const std::vector<OutputSpan>& output_spans) {
+    for (const auto& relocation : relocations) {
+        size_t target = remap_target(relocation.target, layout, output_spans);
+
+        if (target > 0xffff) {
+            throw std::runtime_error("gm: relocated semantic target exceeds 16 bits");
+        }
+
+        out.write_u16_le_at(relocation.field, static_cast<uint16_t>(target));
+    }
+}
+
 uint16_t pair_key(int first, int second) {
     return static_cast<uint16_t>((first << 8) | second);
+}
+
+std::optional<std::string> decode_text_source(
+    int mode, const std::vector<uint8_t>& bytes,
+    const std::vector<std::vector<int>>& dict, const Charset& cs) {
+    std::string text;
+
+    if (mode == 2) {
+        for (uint8_t value : bytes) {
+            if (value == 0x04) {
+                text.push_back('\n');
+            } else if (value >= 0x20 && value <= 0x7e) {
+                text.push_back(static_cast<char>(value));
+            } else {
+                return std::nullopt;
+            }
+        }
+        return text;
+    }
+
+    for (size_t pos = 0; pos < bytes.size();) {
+        uint8_t value = bytes[pos++];
+
+        if (value == 0x04) {
+            text.push_back('\n');
+            continue;
+        }
+
+        int index = -1;
+        if (value >= 0x18 && value <= 0x7f) index = value - 0x18;
+        else if (value >= 0xa0 && value <= 0xdf) index = value - 0x38;
+        std::vector<int> sjis;
+
+        if (index >= 0) {
+            if (index >= static_cast<int>(dict.size())) return std::nullopt;
+            sjis = dict[index];
+        } else {
+            if (pos >= bytes.size()) return std::nullopt;
+            sjis = {value, bytes[pos++]};
+        }
+
+        auto decoded = cs.sjis_to_char(sjis);
+        if (!decoded.has_value()) return std::nullopt;
+        text += char32_to_utf8(*decoded);
+    }
+
+    return text;
 }
 
 std::vector<std::vector<int>> read_dict(const AstNode& ast, const Charset& cs) {
@@ -215,9 +315,11 @@ void emit_header(ByteWriter& out, const std::vector<std::vector<int>>& dict) {
 
 void emit_text(ByteWriter& out, const AstNode& node, const Charset& cs,
                const std::vector<std::vector<int>>& dict) {
-    if (node.children.size() != 2 || !node.children[0].is_integer() ||
+    if ((node.children.size() != 2 && node.children.size() != 3) ||
+        !node.children[0].is_integer() ||
         !node.children[1].is_string()) {
-        throw std::runtime_error("gm: expected (gm-text MODE \"text\")");
+        throw std::runtime_error(
+            "gm: expected (gm-text MODE \"text\" [SOURCE])");
     }
 
     int mode = node.children[0].int_val;
@@ -228,9 +330,39 @@ void emit_text(ByteWriter& out, const AstNode& node, const Charset& cs,
 
     out.emit(0x4a);
     out.emit(static_cast<uint8_t>(mode));
+    std::string text = node.children[1].str_val;
+
+    if (node.children.size() == 3) {
+        const auto& source = node.children[2];
+
+        if (!source.is_list("gm-text-source") || source.children.empty() ||
+            !source.children[0].is_string()) {
+            throw std::runtime_error("gm: malformed gm-text-source");
+        }
+
+        const std::string& original = source.children[0].str_val;
+        std::vector<uint8_t> source_bytes;
+
+        for (size_t i = 1; i < source.children.size(); i++) {
+            if (!source.children[i].is_integer() ||
+                source.children[i].int_val < 0 ||
+                source.children[i].int_val > 255) {
+                throw std::runtime_error("gm: invalid gm-text-source byte");
+            }
+            source_bytes.push_back(static_cast<uint8_t>(source.children[i].int_val));
+        }
+
+        auto decoded = decode_text_source(mode, source_bytes, dict, cs);
+
+        if (decoded.has_value() && *decoded == original &&
+            text.compare(0, original.size(), original) == 0) {
+            out.emit(source_bytes);
+            text.erase(0, original.size());
+        }
+    }
 
     if (mode == 2) {
-        for (unsigned char byte : node.children[1].str_val) {
+        for (unsigned char byte : text) {
             if (byte == '\n') {
                 out.emit(0x04);
                 continue;
@@ -249,7 +381,7 @@ void emit_text(ByteWriter& out, const AstNode& node, const Charset& cs,
             lookup.emplace(pair_key(dict[i][0], dict[i][1]), i);
         }
 
-        for (char32_t ch : utf8_to_codepoints(node.children[1].str_val)) {
+        for (char32_t ch : utf8_to_codepoints(text)) {
             if (ch == U'\n') {
                 out.emit(0x04);
                 continue;
@@ -303,6 +435,7 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
     ByteWriter out;
     emit_header(out, dict);
     std::vector<OutputSpan> output_spans;
+    std::vector<SemanticRelocation> semantic_relocations;
     size_t span_index = 0;
 
     for (const auto& node : ast.children) {
@@ -312,6 +445,7 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
         }
 
         size_t output_start = out.size();
+        bool semantic = false;
 
         if (node.is_list("raw")) {
             for (const auto& byte : node.children) {
@@ -323,6 +457,9 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
             }
         } else if (node.is_list("gm-text")) {
             emit_text(out, node, cs, dict);
+            semantic = true;
+        } else if (emit_instruction(out, node, semantic_relocations)) {
+            semantic = true;
         } else {
             throw std::runtime_error("gm compiler: unsupported node: " + node.tag);
         }
@@ -341,7 +478,7 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
                 throw std::runtime_error("gm: raw nodes with layout metadata cannot change length");
             }
 
-            output_spans.push_back({output_start, output_end});
+            output_spans.push_back({output_start, output_end, semantic});
             span_index++;
         }
     }
@@ -357,6 +494,8 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
     if (layout.present) {
         apply_relocations(out, layout, output_spans);
     }
+
+    apply_semantic_relocations(out, semantic_relocations, layout, output_spans);
 
     return out.take_data();
 }

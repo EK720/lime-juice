@@ -18,6 +18,7 @@
 
 #include "loader.h"
 #include "opener.h"
+#include "semantic.h"
 #include "walker.h"
 #include "../../charset.h"
 #include "../../utf8.h"
@@ -34,6 +35,7 @@ struct TextRecord {
     size_t end;
     int mode;
     std::string text;
+    std::vector<uint8_t> bytes;
 };
 
 bool is_sjis_pair(uint8_t lead, uint8_t trail) {
@@ -53,6 +55,7 @@ std::optional<TextRecord> parse_text(const std::vector<uint8_t>& code, size_t st
 
     int mode = code[start + 1];
     size_t pos = start + 2;
+    size_t payload_start = pos;
     std::string text;
 
     while (pos < code.size() && code[pos] != 0) {
@@ -119,7 +122,55 @@ std::optional<TextRecord> parse_text(const std::vector<uint8_t>& code, size_t st
         return std::nullopt;
     }
 
-    return TextRecord{pos + 1, mode, std::move(text)};
+    return TextRecord{pos + 1, mode, std::move(text),
+                      std::vector<uint8_t>(code.begin() + payload_start,
+                                           code.begin() + pos)};
+}
+
+std::vector<uint8_t> canonical_text_bytes(
+    int mode, const std::string& text,
+    const std::vector<std::vector<int>>& dict, const Charset& cs) {
+    std::vector<uint8_t> result;
+
+    if (mode == 2) {
+        for (unsigned char value : text) {
+            result.push_back(value == '\n' ? 0x04 : value);
+        }
+        return result;
+    }
+
+    for (char32_t ch : utf8_to_codepoints(text)) {
+        if (ch == U'\n') {
+            result.push_back(0x04);
+            continue;
+        }
+
+        auto sjis = cs.char_to_sjis(ch);
+
+        if (!sjis.has_value() || sjis->size() != 2) {
+            return {};
+        }
+
+        size_t index = dict.size();
+
+        for (size_t i = 0; i < dict.size(); i++) {
+            if (dict[i] == *sjis) {
+                index = i;
+                break;
+            }
+        }
+
+        if (index < dict.size() && index < 104) {
+            result.push_back(static_cast<uint8_t>(0x18 + index));
+        } else if (index < dict.size()) {
+            result.push_back(static_cast<uint8_t>(0x38 + index));
+        } else {
+            result.push_back(static_cast<uint8_t>((*sjis)[0]));
+            result.push_back(static_cast<uint8_t>((*sjis)[1]));
+        }
+    }
+
+    return result;
 }
 
 AstNode make_dict(const std::vector<std::vector<int>>& dict, const Config& cfg,
@@ -190,7 +241,9 @@ AstNode load_mes(const std::string& path, Config& cfg) {
             ? parse_text(mes.code, start, mes.dictionary, cs)
             : std::nullopt;
 
-        if (!text.has_value() || text->end != end || !cfg.decode) {
+        if (!cfg.decode ||
+            (instruction.opcode == 0x4a &&
+             (!text.has_value() || text->end != end))) {
             if (raw.empty()) {
                 raw_start = instruction.start;
             }
@@ -204,10 +257,31 @@ AstNode load_mes(const std::string& path, Config& cfg) {
         }
 
         flush_raw(code_nodes, raw, layout, raw_start, raw_end);
-        code_nodes.push_back(AstNode::make_list("gm-text", {
-            AstNode::make_integer(text->mode),
-            AstNode::make_string(text->text)
-        }));
+        if (text.has_value()) {
+            std::vector<AstNode> children = {
+                AstNode::make_integer(text->mode),
+                AstNode::make_string(text->text)
+            };
+            auto canonical = canonical_text_bytes(text->mode, text->text,
+                                                  mes.dictionary, cs);
+
+            if (canonical != text->bytes) {
+                std::vector<AstNode> source = {
+                    AstNode::make_string(text->text)
+                };
+                for (uint8_t value : text->bytes) {
+                    source.push_back(AstNode::make_integer(value));
+                }
+                children.push_back(AstNode::make_list("gm-text-source",
+                                                       std::move(source)));
+            }
+
+            code_nodes.push_back(AstNode::make_list("gm-text",
+                                                     std::move(children)));
+        } else {
+            code_nodes.push_back(decode_instruction(mes.code, code_base,
+                                                    instruction));
+        }
         append_span(layout, instruction.start, instruction.end);
     }
 

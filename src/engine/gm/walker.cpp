@@ -169,7 +169,7 @@ private:
         require(pos, 3, "reference");
         uint8_t token = byte(pos);
 
-        if (token < 5) {
+        if (token < 5 || token > 0x12) {
             fail(pos, "invalid reference token");
         }
 
@@ -237,8 +237,10 @@ private:
 
             pure_literal = false;
 
-            if (token >= 0x20) {
+            if (token >= 0x20 && token <= 0x2f && token != 0x27) {
                 pos++;
+            } else if (token >= 0x20) {
+                fail(pos, "invalid expression operator");
             } else {
                 pos = read_operand(pos, false).end;
             }
@@ -361,7 +363,7 @@ private:
                 pos = read_reference(pos);
                 pos = expect_zero(pos, "after 0x3a subtype 10 reference");
             }
-        } else if (subtype < 11 || subtype > 13) {
+        } else if (subtype < 11 || subtype > 12) {
             fail(pos - 1, "unknown opcode 0x3a subtype");
         }
 
@@ -372,7 +374,7 @@ private:
         switch (opcode) {
             case 0x30: case 0x36: case 0x38: case 0x3d: case 0x41:
             case 0x42: case 0x50: case 0x56: case 0x57: case 0x66:
-            case 0x69: case 0x70: case 0x7c: case 0x7f:
+            case 0x69: case 0x70: case 0x7c: case 0x7f: case 0x80:
                 return true;
             default:
                 return false;
@@ -387,7 +389,8 @@ private:
             case 0x5a: case 0x5b: case 0x5c: case 0x5d: case 0x5e:
             case 0x5f: case 0x60: case 0x61: case 0x63: case 0x67:
             case 0x6c: case 0x6d: case 0x6e: case 0x6f: case 0x74:
-            case 0x75: case 0x78: case 0x7a: case 0x7d:
+            case 0x75: case 0x78: case 0x7a: case 0x7d: case 0x81:
+            case 0x82:
                 return true;
             default:
                 return false;
@@ -403,13 +406,13 @@ private:
             return {{start, pos, opcode}, {}};
         }
 
-        if (opcode < 0x30 || opcode > 0x7f) {
+        if (opcode < 0x30 || opcode > 0x85) {
             fail(start, "invalid GM opcode");
         }
 
         if (no_operands(opcode)) {
             // Nothing to decode.
-        } else if (opcode == 0x31) {
+        } else if (opcode == 0x31 || opcode == 0x83) {
             require(pos, 4, "opcode 0x31 operands");
             add_relocation(relocations, pos + 2, true);
             pos = read_expression(pos + 4).end;
@@ -446,6 +449,9 @@ private:
             pos += 5;
         } else if (opcode == 0x3e) {
             require(pos, 1, "opcode 0x3e mode");
+            if (byte(pos) != 1 && byte(pos) != 2) {
+                fail(pos, "opcode 0x3e mode is not 1 or 2");
+            }
             pos = expect_zero(pos + 1, "after opcode 0x3e");
         } else if (opcode == 0x43) {
             pos = read_assignment(pos);
@@ -487,7 +493,7 @@ private:
             }
 
             pos = find_zero(pos + 1, "opcode 0x4a text") + 1;
-        } else if (opcode == 0x4b) {
+        } else if (opcode == 0x4b || opcode == 0x84 || opcode == 0x85) {
             pos = read_reference(pos);
             require(pos, 2, "opcode 0x4b terminators");
             pos += 2;
@@ -521,8 +527,8 @@ private:
             auto selector = read_expression(pos);
             pos = selector.end;
 
-            if (!selector.pure_literal || selector.literal > 2) {
-                fail(start, "opcode 0x71 selector is not a literal 0, 1, or 2");
+            if (!selector.pure_literal || selector.literal > 7) {
+                fail(start, "opcode 0x71 selector is not a literal from 0 through 7");
             }
 
             if (selector.literal == 0) {

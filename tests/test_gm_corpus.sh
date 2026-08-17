@@ -76,7 +76,7 @@ while IFS= read -r -d '' mes; do
     mode1_files=$((mode1_files + 1))
     mode1_records=$((mode1_records + record_count))
 
-    sed -E 's/^([[:space:]]*\(gm-text 1 ".*)"\)$/\1あ"\)/' \
+    perl -pe 's/^(\s*\(gm-text 1 "(?:\\.|[^"])*)"/$1あ"/' \
         "$TMP/original.rkt" > "$TMP/grown.rkt"
 
     grown_count=$(grep -c '^[[:space:]]*(gm-text 1 ' "$TMP/grown.rkt" || true)
