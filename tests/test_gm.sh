@@ -26,12 +26,13 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/lime-juice-gm.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 # Exercise the structural detector without the stronger SYSTEM.MLL startup
-# signature. Mode-2 newlines must remain valid GM text tokens.
-printf '%b' '\x02\x00\x4a\x02A\x04B\x00\x4a\x02C\x04D\x00\x00' > "$TMP/heuristic.mes"
+# signature. Mode-2 newlines and JIS X 0201 halfwidth katakana must remain
+# valid GM text tokens.
+printf '%b' '\x02\x00\x4a\x02A\x04B\x00\x4a\x02\xa1\xcb\xb8\xaf\xdf\x00\x00' > "$TMP/heuristic.mes"
 "$JUICE" -d -f --auto-engine -o "$TMP/heuristic.rkt" "$TMP/heuristic.mes"
 grep -q "(engine 'GM)" "$TMP/heuristic.rkt"
 grep -q '(text #:mode 2 "A\\nB")' "$TMP/heuristic.rkt"
-grep -q '(text #:mode 2 "C\\nD")' "$TMP/heuristic.rkt"
+grep -q '(text #:mode 2 "｡ﾋｸｯﾟ")' "$TMP/heuristic.rkt"
 "$JUICE" -c -f -o "$TMP/heuristic-output.mes" "$TMP/heuristic.rkt"
 cmp "$TMP/heuristic.mes" "$TMP/heuristic-output.mes"
 
@@ -40,9 +41,9 @@ cmp "$TMP/heuristic.mes" "$TMP/heuristic-output.mes"
 # width and moves the following instruction boundary from 0x08 to 0x09.
 printf '%b' '\x02\x00\x33\x08\x00\x01\x01\x00\x00' > "$TMP/expression.mes"
 "$JUICE" -d -f -e GM -o "$TMP/expression.rkt" "$TMP/expression.mes"
-grep -q '(if (local-address 8) 1)' "$TMP/expression.rkt"
+grep -q '(if-frame 1 (local-address 8))' "$TMP/expression.rkt"
 grep -q '(label 8)' "$TMP/expression.rkt"
-sed 's/(if (local-address 8) 1)/(if (local-address 8) 256)/' \
+sed 's/(if-frame 1 (local-address 8))/(if-frame 256 (local-address 8))/' \
     "$TMP/expression.rkt" > "$TMP/expression-edited.rkt"
 "$JUICE" -c -f -o "$TMP/expression-edited.mes" "$TMP/expression-edited.rkt"
 printf '%b' '\x02\x00\x33\x09\x00\x02\x00\x01\x00\x00' \
@@ -195,6 +196,21 @@ cmp "$TMP/packed-source.rkt" "$TMP/packed.rkt"
 "$JUICE" -c -f -o "$TMP/packed-again.mes" "$TMP/packed.rkt"
 cmp "$TMP/packed.mes" "$TMP/packed-again.mes"
 
+# Fixed literal-plus-match vector: ten end instructions compile to twelve
+# unpacked bytes. This checks the canonical wrapper independently of Juice's
+# own unpacker and guards the header, MSB-first flags, and match token layout.
+awk 'BEGIN {
+    print "(mes"
+    print " (meta (engine '\''GM) (charset \"pc98\") (compression '\''beyond))"
+    print " (dict)"
+    for (i = 0; i < 10; i++) print " (end)"
+    print ")"
+}' > "$TMP/packed-vector.rkt"
+"$JUICE" -c -f -o "$TMP/packed-vector.mes" "$TMP/packed-vector.rkt"
+printf '%b' '\xff\x0c\x00\x04\x00\x02\x00\x01\x00\x40\x02\x01\x00\x0a' \
+    > "$TMP/expected-packed-vector.mes"
+cmp "$TMP/expected-packed-vector.mes" "$TMP/packed-vector.mes"
+
 "$JUICE" -c -f --auto-wrap -o "$TMP/wrapped.mes" "$TMP/output.rkt" \
     > "$TMP/wrapped.log" 2>&1 || true
 test ! -e "$TMP/wrapped.mes"
@@ -212,14 +228,24 @@ grep -q '(pop-reference ' "$TMP/semantic.rkt"
 "$JUICE" -c -f -o "$TMP/semantic-roundtrip.mes" "$TMP/semantic.rkt"
 cmp "$TMP/semantic.mes" "$TMP/semantic-roundtrip.mes"
 
-# GM files cannot exceed the engine's 16-bit file-address space.
+# Arbitrary byte blocks are not part of GM source syntax. Every instruction
+# must pass through the typed semantic encoder and relocation machinery.
+printf '%s\n' \
+    "(mes (meta (engine 'GM) (charset \"pc98\")) (dict) (raw 0))" \
+    > "$TMP/raw.rkt"
+"$JUICE" -c -f -o "$TMP/raw.mes" "$TMP/raw.rkt" \
+    > "$TMP/raw.log" 2>&1 || true
+test ! -e "$TMP/raw.mes"
+grep -q 'unsupported node: raw' "$TMP/raw.log"
+
+# GM files cannot exceed the engine's 16-bit file-address space. Build the
+# oversized program entirely from valid semantic instructions.
 awk 'BEGIN {
     print "(mes"
     print " (meta (engine '\''GM) (charset \"pc98\"))"
     print " (dict)"
-    printf " (raw"
-    for (i = 0; i < 65535; i++) printf " 0"
-    print "))"
+    for (i = 0; i < 65535; i++) print " (end)"
+    print ")"
 }' > "$TMP/oversize.rkt"
 
 "$JUICE" -c -f -o "$TMP/oversize.mes" "$TMP/oversize.rkt" \

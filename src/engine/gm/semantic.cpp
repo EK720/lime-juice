@@ -524,7 +524,12 @@ private:
                 return list(name, {integer(u16()), address(), expression()});
             case 0x32:
                 return list(name, {integer(u16()), address()});
-            case 0x33: case 0x34:
+            case 0x33: {
+                AstNode target = address();
+                AstNode condition = expression();
+                return list(name, {std::move(condition), std::move(target)});
+            }
+            case 0x34:
                 return list(name, {address(), expression()});
             case 0x35: {
                 std::vector<AstNode> children = {address()};
@@ -1127,7 +1132,7 @@ const char* opcode_name(uint8_t opcode) {
         case 0x30: return "nop:48";
         case 0x31: return "for-start";
         case 0x32: return "for-continue";
-        case 0x33: return "if";
+        case 0x33: return "if-frame";
         case 0x34: return "switch";
         case 0x35: return "case";
         case 0x36: return "nop:54";
@@ -1282,7 +1287,12 @@ bool emit_instruction(ByteWriter& out, const AstNode& node,
                 node.children[0], "loop id", 0, 65535)));
             emit_address(out, node.children[1], relocations);
             break;
-        case 0x33: case 0x34:
+        case 0x33:
+            expect_children(node, 2);
+            emit_address(out, node.children[1], relocations);
+            emit_expression(out, node.children[0]);
+            break;
+        case 0x34:
             expect_children(node, 2);
             emit_address(out, node.children[0], relocations);
             emit_expression(out, node.children[1]);

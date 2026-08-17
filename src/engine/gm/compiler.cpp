@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -70,6 +71,15 @@ void apply_semantic_relocations(
 
 uint16_t pair_key(int first, int second) {
     return static_cast<uint16_t>((first << 8) | second);
+}
+
+std::optional<uint8_t> mode2_byte(char32_t ch) {
+    if (ch == U'\n') return 0x04;
+    if (ch >= 0x20 && ch <= 0x7e) return static_cast<uint8_t>(ch);
+    if (ch >= 0xff61 && ch <= 0xff9f) {
+        return static_cast<uint8_t>(ch - 0xfec0);
+    }
+    return std::nullopt;
 }
 
 std::vector<std::vector<int>> read_dict(const AstNode& ast, const Charset& cs) {
@@ -168,11 +178,14 @@ void emit_text(ByteWriter& out, const AstNode& node, const Charset& cs,
         const auto& item = node.children[i];
         if (item.is_string()) {
             if (mode == 2) {
-                for (unsigned char byte : item.str_val) {
-                    if (byte == '\n') out.emit(0x04);
-                    else if (byte >= 0x20 && byte <= 0x7e) out.emit(byte);
-                    else throw std::runtime_error(
-                        "gm: mode 2 text only supports printable ASCII and newlines");
+                for (char32_t ch : utf8_to_codepoints(item.str_val)) {
+                    auto byte = mode2_byte(ch);
+                    if (!byte.has_value()) {
+                        throw std::runtime_error(
+                            "gm: mode 2 text only supports printable ASCII, "
+                            "halfwidth katakana, and newlines");
+                    }
+                    out.emit(*byte);
                 }
                 continue;
             }
@@ -281,15 +294,7 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
             continue;
         }
 
-        if (node.is_list("raw")) {
-            for (const auto& byte : node.children) {
-                if (!byte.is_integer() || byte.int_val < 0 || byte.int_val > 255) {
-                    throw std::runtime_error("gm: raw byte must be an integer from 0 to 255");
-                }
-
-                out.emit(static_cast<uint8_t>(byte.int_val));
-            }
-        } else if (node.is_list("text")) {
+        if (node.is_list("text")) {
             emit_text(out, node, cs, dict);
         } else if (node.is_list("text-raw")) {
             emit_text_raw(out, node);

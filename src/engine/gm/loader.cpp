@@ -54,6 +54,24 @@ bool is_sjis_pair(uint8_t lead, uint8_t trail) {
     return valid_lead && valid_trail;
 }
 
+std::optional<char32_t> mode2_codepoint(uint8_t byte) {
+    if (byte == 0x04) return U'\n';
+    if (byte >= 0x20 && byte <= 0x7e) return byte;
+    if (byte >= 0xa1 && byte <= 0xdf) {
+        return static_cast<char32_t>(byte) + 0xfec0;
+    }
+    return std::nullopt;
+}
+
+std::optional<uint8_t> mode2_byte(char32_t ch) {
+    if (ch == U'\n') return 0x04;
+    if (ch >= 0x20 && ch <= 0x7e) return static_cast<uint8_t>(ch);
+    if (ch >= 0xff61 && ch <= 0xff9f) {
+        return static_cast<uint8_t>(ch - 0xfec0);
+    }
+    return std::nullopt;
+}
+
 std::optional<TextRecord> parse_text(const std::vector<uint8_t>& code, size_t start,
                                      const std::vector<std::vector<int>>& dict,
                                      const Charset& cs) {
@@ -72,17 +90,9 @@ std::optional<TextRecord> parse_text(const std::vector<uint8_t>& code, size_t st
         uint8_t byte = code[pos];
 
         if (mode == 2) {
-            if (byte == 0x04) {
-                text.push_back('\n');
-                pos++;
-                continue;
-            }
-
-            if (byte < 0x20 || byte > 0x7e) {
-                return std::nullopt;
-            }
-
-            text.push_back(static_cast<char>(byte));
+            auto decoded = mode2_codepoint(byte);
+            if (!decoded.has_value()) return std::nullopt;
+            text += char32_to_utf8(*decoded);
             pos++;
             continue;
         }
@@ -149,8 +159,10 @@ std::optional<std::vector<uint8_t>> canonical_text_bytes(
     if (mode == 2) {
         for (const auto& item : content) {
             if (!item.is_string()) return std::nullopt;
-            for (unsigned char value : item.str_val) {
-                result.push_back(value == '\n' ? 0x04 : value);
+            for (char32_t ch : utf8_to_codepoints(item.str_val)) {
+                auto encoded = mode2_byte(ch);
+                if (!encoded.has_value()) return std::nullopt;
+                result.push_back(*encoded);
             }
         }
         return result;

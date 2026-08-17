@@ -54,7 +54,8 @@ static size_t gm_text_end(const std::vector<uint8_t>& bytes, size_t start,
                 continue;
             }
 
-            if (byte < 0x20 || byte > 0x7e) {
+            if (!((byte >= 0x20 && byte <= 0x7e) ||
+                  (byte >= 0xa1 && byte <= 0xdf))) {
                 return 0;
             }
 

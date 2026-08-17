@@ -5,7 +5,7 @@
  (nop:48)
  (for-start 1 (local-address 2) 1)
  (for-continue 1 (local-address 2))
- (if (local-address 2) 1)
+ (if-frame 1 (local-address 2))
  (switch (local-address 2) 513)
  (case (local-address 2) 1 2)
  (nop:54)

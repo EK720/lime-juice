@@ -53,12 +53,12 @@ Dialogue is ordinary text:
 
 ```racket
 (text "日本語の台詞")
-(text #:mode 2 "ASCII text")
+(text #:mode 2 "ASCII and ﾊﾝｶｸ text")
 ```
 
 Mode 1 uses the file dictionary and raw two-byte Shift-JIS characters. Mode 2
-accepts printable ASCII. In either mode, `\n` compiles to the engine's `0x04`
-newline control.
+accepts printable ASCII and JIS X 0201 halfwidth katakana. In either mode,
+`\n` compiles to the engine's `0x04` newline control.
 
 Resource names and other printable byte-string parameters are quoted strings:
 
@@ -74,7 +74,7 @@ targets use labels, so their encoded addresses are recalculated after an edit.
 
 ## Commands and unresolved form
 
-Known opcodes use semantic names such as `if`, `assign`, `text-color`,
+Known opcodes use semantic names such as `if-frame`, `assign`, `text-color`,
 `mouse-command`, and `save-slot`. As with the other engines, the `(engine 'GM)`
 metadata scopes those names, so they do not carry an engine prefix. The
 encodable fixture `tests/fixtures/gm-semantic.rkt` is the compact reference for
@@ -88,10 +88,12 @@ every supported opcode and operand shape.
 
 Numeric `cmd:N` nodes compile normally. The four native no-operations follow
 the existing Juice convention: `nop:48`, `nop:54`, `nop:66`, and `nop:127`.
+GM deliberately has no generic `(raw BYTE ...)` instruction form: every
+command goes through its typed layout and relocation checks.
 
 | Range | Area | Representative nodes |
 |---|---|---|
-| `0x30`-`0x42` | control flow and menus | `for-start`, `if`, `gosub-if`, `menu`, `return` |
+| `0x30`-`0x42` | control flow and menus | `for-start`, `if-frame`, `gosub-if`, `menu`, `return` |
 | `0x43`-`0x4f` | assignment and text | `assign`, `string-copy`, `text-window`, `text` |
 | `0x50`-`0x63` | palette and graphics | `message-end`, `palette-set`, `image-open`, `blit` |
 | `0x64`-`0x71` | input, files, and drivers | `input`, `mouse-command`, `mes-jump`, `mll-load`, `video-command` |
@@ -138,9 +140,9 @@ Generic parameters can be expressions, strings, or a typed reference:
 ```
 
 Printable ASCII uses a quoted string. Arbitrary payloads use
-`(string-bytes BYTE ...)`, which is also what `--no-decode` emits. The
-reference-parameter terminator used by Fermion is present throughout the
-Be-Yond retail corpus too; the dialects share this parameter grammar.
+`(string-bytes BYTE ...)`, which is also what `--no-decode` emits. All seven
+`0x0f` reference parameters observed in the 253-file retail Be-Yond corpus use
+the same reference-plus-zero encoding as Fermion.
 
 ## Text (`0x4a`)
 
@@ -153,9 +155,10 @@ Mode 1 payload tokens are:
 | `a0`-`df` | dictionary entry `token - 0x38` |
 | otherwise | raw two-byte Shift-JIS character |
 
-Mode 2 stores printable ASCII and uses the same `04` newline control. Unknown
-Shift-JIS extensions and gaiji remain local escapes inside otherwise editable
-text instead of making the whole line raw:
+Mode 2 stores printable ASCII and JIS X 0201 bytes `a1`-`df`, presented as
+Unicode halfwidth katakana `U+FF61`-`U+FF9F`. It uses the same `04` newline
+control. Unknown Shift-JIS extensions and gaiji remain local escapes inside
+otherwise editable text instead of making the whole line raw:
 
 ```racket
 (text "known text" (chr-raw 235 160) "more text")
@@ -199,10 +202,14 @@ addresses. Explicit labels remain only for control flow that is shared or
 cannot be reduced without changing its meaning:
 
 ```racket
-(if (local-address 500) (== (ref 11 1) 0))
+(if-frame (== (ref 11 1) 0) (local-address 500))
 ...
 (label 500)
 ```
+
+`if-frame` is the native type-1 IF-frame primitive, with its condition first
+and skip target second. It is only exposed when the surrounding flow cannot be
+lifted safely into a structured form.
 
 The `label` number is an identifier copied from the input address; it is not
 necessarily the address emitted after editing. At compile time, each

@@ -74,14 +74,14 @@ bool while_start(const std::vector<AstNode>& nodes, size_t index,
                  const std::unordered_map<int32_t, size_t>& local_uses,
                  size_t& label_index) {
     const auto& branch = nodes[index];
-    if (!branch.is_list("if") || branch.children.size() != 2 ||
-        !branch.children[0].is_list("local-address") ||
-        branch.children[0].children.size() != 1 ||
-        !branch.children[0].children[0].is_integer()) {
+    if (!branch.is_list("if-frame") || branch.children.size() != 2 ||
+        !branch.children[1].is_list("local-address") ||
+        branch.children[1].children.size() != 1 ||
+        !branch.children[1].children[0].is_integer()) {
         return false;
     }
 
-    int32_t target = branch.children[0].children[0].int_val;
+    int32_t target = branch.children[1].children[0].int_val;
     auto uses = local_uses.find(target);
     if (uses == local_uses.end() || uses->second != 1) {
         return false;
@@ -152,9 +152,9 @@ void lower_node(const AstNode& node, std::vector<AstNode>& result,
     }
 
     int32_t exit = labels.next();
-    result.push_back(AstNode::make_list("if", {
-        AstNode::make_list("local-address", {AstNode::make_integer(exit)}),
-        node.children[0]
+    result.push_back(AstNode::make_list("if-frame", {
+        node.children[0],
+        AstNode::make_list("local-address", {AstNode::make_integer(exit)})
     }));
     for (size_t i = 1; i < node.children.size(); i++) {
         lower_node(node.children[i], result, labels);
@@ -202,7 +202,7 @@ std::vector<AstNode> fuse_syntax(std::vector<AstNode> nodes) {
             body = fuse_syntax(std::move(body));
 
             std::vector<AstNode> children;
-            children.push_back(std::move(nodes[i].children[1]));
+            children.push_back(std::move(nodes[i].children[0]));
             children.insert(children.end(),
                             std::make_move_iterator(body.begin()),
                             std::make_move_iterator(body.end()));
