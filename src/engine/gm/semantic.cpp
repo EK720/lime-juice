@@ -59,31 +59,12 @@ const char* operator_name(uint8_t token) {
     }
 }
 
-bool literal_value(const AstNode& expression, uint32_t& value,
-                   size_t* width = nullptr) {
-    if (!expression.is_list("gm-expr") || expression.children.size() != 1) {
+bool literal_value(const AstNode& expression, uint32_t& value) {
+    if (!expression.is_integer()) {
         return false;
     }
 
-    const auto& literal = expression.children[0];
-
-    if (!literal.is_list("gm-imm") || literal.children.size() != 2 ||
-        !literal.children[0].is_integer() || !literal.children[1].is_integer()) {
-        return false;
-    }
-
-    int literal_width = literal.children[0].int_val;
-
-    if (literal_width < 1 || literal_width > 4) {
-        return false;
-    }
-
-    value = static_cast<uint32_t>(literal.children[1].int_val);
-
-    if (width != nullptr) {
-        *width = static_cast<size_t>(literal_width);
-    }
-
+    value = static_cast<uint32_t>(expression.int_val);
     return true;
 }
 
@@ -141,7 +122,7 @@ private:
         }
     }
 
-    AstNode bytes(size_t count, const std::string& tag = "gm-bytes") {
+    AstNode bytes(size_t count, const std::string& tag = "bytes") {
         std::vector<AstNode> values;
         values.reserve(count);
 
@@ -165,15 +146,20 @@ private:
             children.push_back(expression());
         }
 
-        return list("gm-ref", std::move(children));
+        return list("ref", std::move(children));
     }
 
-    AstNode operand(bool initial) {
+    struct Operand {
+        AstNode node;
+        size_t literal_width = 0;
+    };
+
+    Operand operand(bool initial) {
         uint8_t token = peek();
 
         if (initial && token == 0x32) {
             byte();
-            return list("gm-random", {integer(u16()), integer(u16())});
+            return {list("random", {integer(u16()), integer(u16())})};
         }
 
         if (token >= 1 && token <= 4) {
@@ -184,27 +170,30 @@ private:
                 value |= static_cast<uint32_t>(byte()) << (i * 8);
             }
 
-            return list("gm-imm", {integer(static_cast<uint32_t>(width)),
-                                    integer(value)});
+            return {integer(value), width};
         }
 
-        return reference();
+        return {reference()};
     }
 
-    AstNode expression() {
+    AstNode expression(size_t* literal_width = nullptr) {
         std::vector<AstNode> terms;
 
         if (peek() == 0) {
             byte();
-            return list("gm-expr");
+            if (literal_width != nullptr) *literal_width = 0;
+            return AstNode::make_symbol("default");
         }
 
-        terms.push_back(operand(true));
+        auto first = operand(true);
+        size_t pure_literal_width = first.literal_width;
+        terms.push_back(std::move(first.node));
 
         while (peek() != 0) {
             uint8_t token = peek();
 
             if (token >= 0x20) {
+                pure_literal_width = 0;
                 byte();
                 const char* name = operator_name(token);
 
@@ -213,11 +202,13 @@ private:
                 }
                 terms.push_back(AstNode::make_symbol(name));
             } else {
-                terms.push_back(operand(false));
+                pure_literal_width = 0;
+                terms.push_back(std::move(operand(false).node));
             }
         }
 
         zero();
+        if (literal_width != nullptr) *literal_width = pure_literal_width;
 
         // GM stores expressions as postfix streams. Present balanced streams
         // as the same nested operator trees used by the older Juice engines,
@@ -232,7 +223,7 @@ private:
             }
 
             if (stack.size() < 2) {
-                return list("gm-expr", std::move(terms));
+                return list("postfix", std::move(terms));
             }
 
             AstNode right = std::move(stack.back());
@@ -244,10 +235,10 @@ private:
         }
 
         if (stack.size() == 1) {
-            return list("gm-expr", {std::move(stack.back())});
+            return std::move(stack.back());
         }
 
-        return list("gm-expr", std::move(terms));
+        return list("postfix", std::move(terms));
     }
 
     std::vector<AstNode> params() {
@@ -275,10 +266,10 @@ private:
                     std::vector<AstNode> raw;
                     raw.reserve(string_bytes.size());
                     for (uint8_t value : string_bytes) raw.push_back(integer(value));
-                    values.push_back(list("gm-string-bytes", std::move(raw)));
+                    values.push_back(list("string-bytes", std::move(raw)));
                 }
             } else if (peek() == 0x0f) {
-                values.push_back(list("gm-ref-param", {reference()}));
+                values.push_back(list("ref-param", {reference()}));
                 zero();
             } else {
                 values.push_back(expression());
@@ -305,7 +296,7 @@ private:
         size_t field = base_ + pos_;
         uint16_t target = u16();
         return list(local_fields_.count(field) != 0
-                        ? "gm-local-address" : "gm-address",
+                        ? "local-address" : "address",
                     {integer(target)});
     }
 
@@ -333,13 +324,13 @@ private:
 
             if (literal_value(selector, selector_value) && selector_value == 1) {
                 for (size_t i = 0; i < 6; i++) {
-                    auto value = expression();
                     size_t width = 0;
+                    auto value = expression(&width);
                     uint32_t ignored = 0;
 
-                    if (i == 4 && literal_value(value, ignored, &width) && width == 2) {
-                        value = list("gm-callback", {
-                            list("gm-local-address", {integer(ignored)})
+                    if (i == 4 && literal_value(value, ignored) && width == 2) {
+                        value = list("callback", {
+                            list("local-address", {integer(ignored)})
                         });
                     }
 
@@ -395,7 +386,7 @@ private:
             AstNode value;
 
             if (peek() == 0x0e) {
-                value = list("gm-string-value", {reference()});
+                value = list("string-value", {reference()});
                 zero();
             } else {
                 value = expression();
@@ -408,13 +399,13 @@ private:
                 strides.push_back(integer(byte()));
             }
 
-            std::vector<AstNode> wrapped = {std::move(value)};
-
             if (!strides.empty()) {
-                wrapped.push_back(list("gm-strides", std::move(strides)));
+                children.push_back(list("value", {
+                    std::move(value), list("strides", std::move(strides))
+                }));
+            } else {
+                children.push_back(std::move(value));
             }
-
-            children.push_back(list("gm-value", std::move(wrapped)));
 
             if (peek() == 0) {
                 zero();
@@ -423,7 +414,7 @@ private:
 
             if (peek() == 0x30) {
                 byte();
-                children.push_back(list("gm-range", {reference()}));
+                children.push_back(list("range", {reference()}));
                 zero();
                 break;
             }
@@ -441,11 +432,11 @@ private:
             zero();
             return list(command_name(), {
                 std::move(destination), integer(word),
-                list("gm-ref-source", {std::move(source)})
+                list("ref-source", {std::move(source)})
             });
         }
 
-        std::vector<AstNode> payload;
+        std::vector<uint8_t> payload;
         size_t target = word;
         size_t absolute_pos = base_ + pos_;
 
@@ -454,11 +445,27 @@ private:
         }
 
         while (pos_ < end_) {
-            payload.push_back(integer(byte()));
+            payload.push_back(byte());
         }
 
+        bool printable_string = payload.size() >= 2 && payload.front() == 0x11 &&
+                                payload.back() == 0;
+        for (size_t i = 1; printable_string && i + 1 < payload.size(); i++) {
+            printable_string = payload[i] >= 0x20 && payload[i] <= 0x7e;
+        }
+
+        if (printable_string) {
+            return list(command_name(), {
+                std::move(destination), AstNode::make_string(std::string(
+                    payload.begin() + 1, payload.end() - 1))
+            });
+        }
+
+        std::vector<AstNode> raw;
+        raw.reserve(payload.size());
+        for (uint8_t value : payload) raw.push_back(integer(value));
         return list(command_name(), {
-            std::move(destination), list("gm-inline", std::move(payload))
+            std::move(destination), list("inline", std::move(raw))
         });
     }
 
@@ -476,7 +483,7 @@ private:
             zero();
             return list(command_name(), {
                 std::move(destination),
-                list("gm-ref-source", {integer(first), std::move(source)})
+                list("ref-source", {integer(first), std::move(source)})
             });
         }
 
@@ -492,7 +499,7 @@ private:
         children.insert(children.end(), std::make_move_iterator(source.begin()),
                         std::make_move_iterator(source.end()));
         return list(command_name(), {
-            std::move(destination), list("gm-inline-source", std::move(children))
+            std::move(destination), list("inline-source", std::move(children))
         });
     }
 
@@ -525,8 +532,11 @@ private:
                 zero();
                 return list(name, std::move(children));
             }
-            case 0x37:
-                return list(name, {expression()});
+            case 0x37: {
+                AstNode value = expression();
+                if (value.is_symbol("default")) return list(name);
+                return list(name, {std::move(value)});
+            }
             case 0x39: case 0x3f: case 0x40:
                 return list(name, {address(), address(), expression()});
             case 0x3a:
@@ -553,6 +563,9 @@ private:
                 AstNode ref = reference();
                 uint8_t first = byte();
                 uint8_t second = byte();
+                if (first == 0 && second == 0) {
+                    return list(name, {std::move(ref)});
+                }
                 return list(name, {std::move(ref), integer(first), integer(second)});
             }
             case 0x46: case 0x47: case 0x48: case 0x49: case 0x4c:
@@ -697,9 +710,9 @@ void emit_bytes(ByteWriter& out, const AstNode& node, const std::string& tag) {
 void emit_expression(ByteWriter& out, const AstNode& expression);
 
 void emit_reference(ByteWriter& out, const AstNode& reference) {
-    if (!reference.is_list("gm-ref") ||
+    if (!reference.is_list("ref") ||
         (reference.children.size() != 2 && reference.children.size() != 3)) {
-        throw std::runtime_error("gm: expected (gm-ref TOKEN OFFSET [INDEX])");
+        throw std::runtime_error("gm: expected (ref TOKEN OFFSET [INDEX])");
     }
 
     int token = checked_integer(reference.children[0], "reference token", 5, 0x12);
@@ -745,27 +758,17 @@ uint8_t operator_token(const AstNode& node) {
 
 void emit_expression_term(ByteWriter& out, const AstNode& term,
                           bool& emitted_any) {
-    if (term.is_list("gm-imm")) {
-        expect_children(term, 2);
-        int width = checked_integer(term.children[0], "literal width", 1, 4);
-
-        if (!term.children[1].is_integer()) {
-            throw std::runtime_error("gm: invalid literal value");
-        }
-
-        uint32_t value = static_cast<uint32_t>(term.children[1].int_val);
-
-        if (width < 4 && value >= (1u << (width * 8))) {
-            throw std::runtime_error("gm: literal does not fit its width");
-        }
-
+    if (term.is_integer()) {
+        uint32_t value = static_cast<uint32_t>(term.int_val);
+        int width = value <= 0xff ? 1 : value <= 0xffff ? 2 :
+                    value <= 0xffffff ? 3 : 4;
         out.emit(static_cast<uint8_t>(width));
         for (int byte_index = 0; byte_index < width; byte_index++) {
             out.emit(static_cast<uint8_t>(value >> (byte_index * 8)));
         }
-    } else if (term.is_list("gm-ref")) {
+    } else if (term.is_list("ref")) {
         emit_reference(out, term);
-    } else if (term.is_list("gm-random")) {
+    } else if (term.is_list("random")) {
         if (emitted_any) {
             throw std::runtime_error("gm: random range must be the first expression term");
         }
@@ -788,13 +791,18 @@ void emit_expression_term(ByteWriter& out, const AstNode& term,
 }
 
 void emit_expression(ByteWriter& out, const AstNode& expression) {
-    if (!expression.is_list("gm-expr")) {
-        throw std::runtime_error("gm: expected gm-expr");
+    if (expression.is_symbol("default")) {
+        out.emit(0);
+        return;
     }
 
     bool emitted_any = false;
-    for (const auto& term : expression.children) {
-        emit_expression_term(out, term, emitted_any);
+    if (expression.is_list("postfix")) {
+        for (const auto& term : expression.children) {
+            emit_expression_term(out, term, emitted_any);
+        }
+    } else {
+        emit_expression_term(out, expression, emitted_any);
     }
 
     out.emit(0);
@@ -811,18 +819,18 @@ void emit_params(ByteWriter& out, const std::vector<AstNode>& values,
                 if (byte < 0x20 || byte > 0x7e) {
                     throw std::runtime_error(
                         "gm: string parameters only support printable ASCII; "
-                        "use gm-string-bytes for other data");
+                        "use string-bytes for other data");
                 }
                 out.emit(byte);
             }
             out.emit(0);
-        } else if (value.is_list("gm-string-bytes")) {
+        } else if (value.is_list("string-bytes")) {
             out.emit(0x11);
-            emit_bytes(out, value, "gm-string-bytes");
+            emit_bytes(out, value, "string-bytes");
             out.emit(0);
-        } else if (value.is_list("gm-ref-param")) {
+        } else if (value.is_list("ref-param")) {
             expect_children(value, 1);
-            if (!value.children[0].is_list("gm-ref") ||
+            if (!value.children[0].is_list("ref") ||
                 value.children[0].children.empty() ||
                 !value.children[0].children[0].is_integer() ||
                 value.children[0].children[0].int_val != 0x0f) {
@@ -860,9 +868,9 @@ uint32_t require_literal(const AstNode& expression, const std::string& what) {
 
 void emit_address(ByteWriter& out, const AstNode& address,
                   std::vector<SemanticRelocation>& relocations) {
-    bool local = address.is_list("gm-local-address");
-    if (!local && !address.is_list("gm-address")) {
-        throw std::runtime_error("gm: expected gm-address or gm-local-address");
+    bool local = address.is_list("local-address");
+    if (!local && !address.is_list("address")) {
+        throw std::runtime_error("gm: expected address or local-address");
     }
 
     expect_children(address, 1);
@@ -916,14 +924,14 @@ void emit_menu(ByteWriter& out, const AstNode& node,
     for (size_t i = 1; i < node.children.size(); i++) {
         const auto& value = node.children[i];
 
-        if (value.is_list("gm-ref")) {
+        if (value.is_list("ref")) {
             emit_reference(out, value);
             out.emit(0);
-        } else if (value.is_list("gm-callback")) {
+        } else if (value.is_list("callback")) {
             expect_children(value, 1);
-            if (!value.children[0].is_list("gm-local-address")) {
+            if (!value.children[0].is_list("local-address")) {
                 throw std::runtime_error(
-                    "gm: menu callback must use gm-local-address");
+                    "gm: menu callback must use local-address");
             }
             out.emit(2);
             emit_address(out, value.children[0], relocations);
@@ -947,7 +955,7 @@ void emit_assignment(ByteWriter& out, const AstNode& node) {
     for (size_t i = 1; i < node.children.size(); i++) {
         const auto& child = node.children[i];
 
-        if (child.is_list("gm-range")) {
+        if (child.is_list("range")) {
             if (range_seen || i + 1 != node.children.size()) {
                 throw std::runtime_error("gm: assignment range must be last");
             }
@@ -959,33 +967,33 @@ void emit_assignment(ByteWriter& out, const AstNode& node) {
             continue;
         }
 
-        if (!child.is_list("gm-value") || child.children.empty() ||
-            child.children.size() > 2) {
-            throw std::runtime_error("gm: malformed assignment value");
+        const AstNode* value = &child;
+        const AstNode* strides = nullptr;
+        if (child.is_list("value")) {
+            if (child.children.size() != 2 ||
+                !child.children[1].is_list("strides")) {
+                throw std::runtime_error("gm: malformed assignment value");
+            }
+            value = &child.children[0];
+            strides = &child.children[1];
         }
 
-        const auto& value = child.children[0];
-
-        if (value.is_list("gm-string-value")) {
-            expect_children(value, 1);
-            if (!value.children[0].is_list("gm-ref") ||
-                value.children[0].children.empty() ||
-                !value.children[0].children[0].is_integer() ||
-                value.children[0].children[0].int_val != 0x0e) {
+        if (value->is_list("string-value")) {
+            expect_children(*value, 1);
+            if (!value->children[0].is_list("ref") ||
+                value->children[0].children.empty() ||
+                !value->children[0].children[0].is_integer() ||
+                value->children[0].children[0].int_val != 0x0e) {
                 throw std::runtime_error("gm: string assignment must use reference token 0x0e");
             }
-            emit_reference(out, value.children[0]);
+            emit_reference(out, value->children[0]);
             out.emit(0);
         } else {
-            emit_expression(out, value);
+            emit_expression(out, *value);
         }
 
-        if (child.children.size() == 2) {
-            const auto& strides = child.children[1];
-            if (!strides.is_list("gm-strides")) {
-                throw std::runtime_error("gm: malformed assignment strides");
-            }
-            for (const auto& stride : strides.children) {
+        if (strides != nullptr) {
+            for (const auto& stride : strides->children) {
                 out.emit(0x31);
                 out.emit(static_cast<uint8_t>(checked_integer(stride, "stride", 0, 255)));
             }
@@ -999,12 +1007,12 @@ void emit_assignment(ByteWriter& out, const AstNode& node) {
 
 void emit_struct_assignment(ByteWriter& out, const AstNode& node) {
     if (node.children.size() == 3 && node.children[1].is_integer() &&
-        node.children[2].is_list("gm-ref-source")) {
+        node.children[2].is_list("ref-source")) {
         emit_reference(out, node.children[0]);
         out.emit_u16_le(static_cast<uint16_t>(checked_integer(
             node.children[1], "struct word", 0, 65535)));
         expect_children(node.children[2], 1);
-        if (!node.children[2].children[0].is_list("gm-ref") ||
+        if (!node.children[2].children[0].is_list("ref") ||
             node.children[2].children[0].children.empty() ||
             !node.children[2].children[0].children[0].is_integer() ||
             node.children[2].children[0].children[0].int_val != 0x0f) {
@@ -1015,11 +1023,33 @@ void emit_struct_assignment(ByteWriter& out, const AstNode& node) {
         return;
     }
 
-    if (node.children.size() == 2 && node.children[1].is_list("gm-inline")) {
+    if (node.children.size() == 2 && node.children[1].is_string()) {
         emit_reference(out, node.children[0]);
         size_t field = out.size();
         out.emit_u16_le(0);
-        emit_bytes(out, node.children[1], "gm-inline");
+        out.emit(0x11);
+        for (unsigned char byte : node.children[1].str_val) {
+            if (byte < 0x20 || byte > 0x7e) {
+                throw std::runtime_error(
+                    "gm: inline struct strings must be printable ASCII");
+            }
+            out.emit(byte);
+        }
+        out.emit(0);
+
+        if (out.size() > 65535) {
+            throw std::runtime_error("gm: inline struct target exceeds 16 bits");
+        }
+
+        out.write_u16_le_at(field, static_cast<uint16_t>(out.size()));
+        return;
+    }
+
+    if (node.children.size() == 2 && node.children[1].is_list("inline")) {
+        emit_reference(out, node.children[0]);
+        size_t field = out.size();
+        out.emit_u16_le(0);
+        emit_bytes(out, node.children[1], "inline");
 
         if (out.size() > 65535) {
             throw std::runtime_error("gm: inline struct target exceeds 16 bits");
@@ -1037,13 +1067,13 @@ void emit_string_copy(ByteWriter& out, const AstNode& node) {
     emit_reference(out, node.children[0]);
     const auto& source = node.children[1];
 
-    if (source.is_list("gm-ref-source")) {
+    if (source.is_list("ref-source")) {
         expect_children(source, 2);
         out.emit(static_cast<uint8_t>(checked_integer(source.children[0],
                                                       "string source prefix", 0, 255)));
         emit_reference(out, source.children[1]);
         out.emit(0);
-    } else if (source.is_list("gm-inline-source") && !source.children.empty()) {
+    } else if (source.is_list("inline-source") && !source.children.empty()) {
         for (size_t i = 1; i < source.children.size(); i++) {
             out.emit(static_cast<uint8_t>(checked_integer(source.children[i],
                                                       "inline string byte", 0, 255)));
@@ -1093,93 +1123,93 @@ uint8_t opcode_for_tag(const std::string& tag) {
 
 const char* opcode_name(uint8_t opcode) {
     switch (opcode) {
-        case 0x00: return "gm-end";
+        case 0x00: return "end";
         case 0x30: return "nop:48";
-        case 0x31: return "gm-for-start";
-        case 0x32: return "gm-for-continue";
-        case 0x33: return "gm-if";
-        case 0x34: return "gm-switch";
-        case 0x35: return "gm-case";
+        case 0x31: return "for-start";
+        case 0x32: return "for-continue";
+        case 0x33: return "if";
+        case 0x34: return "switch";
+        case 0x35: return "case";
         case 0x36: return "nop:54";
-        case 0x37: return "gm-next";
-        case 0x38: return "gm-while-continue";
-        case 0x39: return "gm-gosub-if";
-        case 0x3a: return "gm-menu";
-        case 0x3b: return "gm-eval";
-        case 0x3c: return "gm-skip-5";
-        case 0x3d: return "gm-menu-click-wait";
-        case 0x3e: return "gm-cursor";
-        case 0x3f: return "gm-call-reset-if";
-        case 0x40: return "gm-gosub-if-save";
-        case 0x41: return "gm-return";
+        case 0x37: return "next";
+        case 0x38: return "while-continue";
+        case 0x39: return "gosub-if";
+        case 0x3a: return "menu";
+        case 0x3b: return "eval";
+        case 0x3c: return "skip-5";
+        case 0x3d: return "menu-click-wait";
+        case 0x3e: return "cursor";
+        case 0x3f: return "call-reset-if";
+        case 0x40: return "gosub-if-save";
+        case 0x41: return "return";
         case 0x42: return "nop:66";
-        case 0x43: return "gm-assign";
-        case 0x44: return "gm-struct-assign";
-        case 0x45: return "gm-string-copy";
-        case 0x46: return "gm-text-window";
-        case 0x47: return "gm-text-origin";
-        case 0x48: return "gm-text-window-stack";
-        case 0x49: return "gm-text-attribute";
-        case 0x4a: return "gm-text";
-        case 0x4b: return "gm-text-indirect";
-        case 0x4c: return "gm-number";
-        case 0x4d: return "gm-text-color";
-        case 0x4e: return "gm-palette-color-map";
-        case 0x4f: return "gm-text-clear";
-        case 0x50: return "gm-message-end";
-        case 0x51: return "gm-palette-set";
-        case 0x52: return "gm-palette-fill";
-        case 0x53: return "gm-palette-work-fill";
-        case 0x54: return "gm-palette-apply";
-        case 0x55: return "gm-fade-wait";
-        case 0x56: return "gm-palette-save";
-        case 0x57: return "gm-palette-restore";
-        case 0x58: return "gm-display-page";
-        case 0x59: return "gm-display-plane";
-        case 0x5a: return "gm-image-open";
-        case 0x5b: return "gm-fill-rect";
-        case 0x5c: return "gm-box-rect";
-        case 0x5d: return "gm-blit";
-        case 0x5e: return "gm-blit-variant";
-        case 0x5f: return "gm-blit-mode";
-        case 0x60: return "gm-window-blit-setup";
-        case 0x61: return "gm-window-blit-setup-alt";
-        case 0x62: return "gm-gdc-window-init";
-        case 0x63: return "gm-sprite";
-        case 0x64: return "gm-input";
-        case 0x65: return "gm-store-values";
-        case 0x66: return "gm-wait-key";
-        case 0x67: return "gm-delay";
-        case 0x68: return "gm-store-six-values";
-        case 0x69: return "gm-tick-snapshot";
-        case 0x6a: return "gm-tick-delta";
-        case 0x6b: return "gm-mouse-command";
-        case 0x6c: return "gm-drive-slot";
-        case 0x6d: return "gm-mes-jump";
-        case 0x6e: return "gm-mll-load";
-        case 0x6f: return "gm-mes-call";
-        case 0x70: return "gm-loop-end";
-        case 0x71: return "gm-video-command";
-        case 0x72: return "gm-file-save-range";
-        case 0x73: return "gm-file-load-range";
-        case 0x74: return "gm-save-slot";
-        case 0x75: return "gm-load-slot";
-        case 0x76: return "gm-image-load";
-        case 0x77: return "gm-image-load-alt";
-        case 0x78: return "gm-vram-bank";
-        case 0x79: return "gm-file-date";
-        case 0x7a: return "gm-music-command";
-        case 0x7b: return "gm-hit-test";
-        case 0x7c: return "gm-hook";
-        case 0x7d: return "gm-driver-state";
-        case 0x7e: return "gm-progress-merge";
+        case 0x43: return "assign";
+        case 0x44: return "struct-assign";
+        case 0x45: return "string-copy";
+        case 0x46: return "text-window";
+        case 0x47: return "text-origin";
+        case 0x48: return "text-window-stack";
+        case 0x49: return "text-attribute";
+        case 0x4a: return "text";
+        case 0x4b: return "text-indirect";
+        case 0x4c: return "number";
+        case 0x4d: return "text-color";
+        case 0x4e: return "palette-color-map";
+        case 0x4f: return "text-clear";
+        case 0x50: return "message-end";
+        case 0x51: return "palette-set";
+        case 0x52: return "palette-fill";
+        case 0x53: return "palette-work-fill";
+        case 0x54: return "palette-apply";
+        case 0x55: return "fade-wait";
+        case 0x56: return "palette-save";
+        case 0x57: return "palette-restore";
+        case 0x58: return "display-page";
+        case 0x59: return "display-plane";
+        case 0x5a: return "image-open";
+        case 0x5b: return "fill-rect";
+        case 0x5c: return "box-rect";
+        case 0x5d: return "blit";
+        case 0x5e: return "blit-variant";
+        case 0x5f: return "blit-mode";
+        case 0x60: return "window-blit-setup";
+        case 0x61: return "window-blit-setup-alt";
+        case 0x62: return "gdc-window-init";
+        case 0x63: return "sprite";
+        case 0x64: return "input";
+        case 0x65: return "store-values";
+        case 0x66: return "wait-key";
+        case 0x67: return "delay";
+        case 0x68: return "store-six-values";
+        case 0x69: return "tick-snapshot";
+        case 0x6a: return "tick-delta";
+        case 0x6b: return "mouse-command";
+        case 0x6c: return "drive-slot";
+        case 0x6d: return "mes-jump";
+        case 0x6e: return "mll-load";
+        case 0x6f: return "mes-call";
+        case 0x70: return "loop-end";
+        case 0x71: return "video-command";
+        case 0x72: return "file-save-range";
+        case 0x73: return "file-load-range";
+        case 0x74: return "save-slot";
+        case 0x75: return "load-slot";
+        case 0x76: return "image-load";
+        case 0x77: return "image-load-alt";
+        case 0x78: return "vram-bank";
+        case 0x79: return "file-date";
+        case 0x7a: return "music-command";
+        case 0x7b: return "hit-test";
+        case 0x7c: return "hook";
+        case 0x7d: return "driver-state";
+        case 0x7e: return "progress-merge";
         case 0x7f: return "nop:127";
-        case 0x80: return "gm-beyond-flag-test";
-        case 0x81: return "gm-beyond-external-call";
-        case 0x82: return "gm-beyond-bank";
-        case 0x83: return "gm-for-end";
-        case 0x84: return "gm-push-reference";
-        case 0x85: return "gm-pop-reference";
+        case 0x80: return "beyond-flag-test";
+        case 0x81: return "beyond-external-call";
+        case 0x82: return "beyond-bank";
+        case 0x83: return "for-end";
+        case 0x84: return "push-reference";
+        case 0x85: return "pop-reference";
         default: return nullptr;
     }
 }
@@ -1200,6 +1230,30 @@ AstNode decode_instruction(const std::vector<uint8_t>& code, size_t code_base,
 
 bool emit_instruction(ByteWriter& out, const AstNode& node,
                       std::vector<SemanticRelocation>& relocations) {
+    if (node.is_list("call")) {
+        if (node.children.empty() || node.children.size() > 2) {
+            throw std::runtime_error("gm: expected (call ADDRESS [CONDITION])");
+        }
+
+        out.emit(0x40);
+        size_t continuation_field = out.size();
+        out.emit_u16_le(0);
+        emit_address(out, node.children[0], relocations);
+        if (node.children.size() == 2) {
+            emit_expression(out, node.children[1]);
+        } else {
+            out.emit(0);
+        }
+        out.emit(0x00);
+
+        if (out.size() > 0xffff) {
+            throw std::runtime_error("gm: call continuation exceeds 16 bits");
+        }
+        out.write_u16_le_at(continuation_field,
+                            static_cast<uint16_t>(out.size()));
+        return true;
+    }
+
     uint8_t opcode = opcode_for_tag(node.tag);
 
     if (opcode == 0xff || opcode == 0x4a) {
@@ -1240,8 +1294,11 @@ bool emit_instruction(ByteWriter& out, const AstNode& node,
             out.emit(0);
             break;
         case 0x37:
-            expect_children(node, 1);
-            emit_expression(out, node.children[0]);
+            if (node.children.size() > 1) {
+                throw std::runtime_error("gm: next takes at most one expression");
+            }
+            if (node.children.empty()) out.emit(0);
+            else emit_expression(out, node.children[0]);
             break;
         case 0x39: case 0x3f: case 0x40:
             expect_children(node, 3);
@@ -1259,9 +1316,9 @@ bool emit_instruction(ByteWriter& out, const AstNode& node,
             break;
         case 0x3c:
             expect_children(node, 1);
-            if (!node.children[0].is_list("gm-bytes") || node.children[0].children.size() != 5)
+            if (!node.children[0].is_list("bytes") || node.children[0].children.size() != 5)
                 throw std::runtime_error("gm: skip-5 requires five bytes");
-            emit_bytes(out, node.children[0], "gm-bytes");
+            emit_bytes(out, node.children[0], "bytes");
             break;
         case 0x3e:
             expect_children(node, 1);
@@ -1277,7 +1334,21 @@ bool emit_instruction(ByteWriter& out, const AstNode& node,
         case 0x45:
             emit_string_copy(out, node);
             break;
-        case 0x4b: case 0x84: case 0x85:
+        case 0x4b:
+            if (node.children.size() != 1 && node.children.size() != 3) {
+                throw std::runtime_error(
+                    "gm: text-indirect takes a reference and optional trailing bytes");
+            }
+            emit_reference(out, node.children[0]);
+            if (node.children.size() == 1) {
+                out.emit(0);
+                out.emit(0);
+            } else {
+                out.emit(static_cast<uint8_t>(checked_integer(node.children[1], "trailing byte", 0, 255)));
+                out.emit(static_cast<uint8_t>(checked_integer(node.children[2], "trailing byte", 0, 255)));
+            }
+            break;
+        case 0x84: case 0x85:
             expect_children(node, 3);
             emit_reference(out, node.children[0]);
             out.emit(static_cast<uint8_t>(checked_integer(node.children[1], "trailing byte", 0, 255)));

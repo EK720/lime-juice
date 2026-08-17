@@ -62,6 +62,7 @@ add_library(juice_lib STATIC
     src/engine/gm/opener.cpp
     src/engine/gm/walker.cpp
     src/engine/gm/semantic.cpp
+    src/engine/gm/syntax.cpp
     src/engine/gm/loader.cpp
     src/engine/gm/compiler.cpp
     src/auto_detect.cpp

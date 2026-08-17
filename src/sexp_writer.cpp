@@ -39,12 +39,12 @@ SexpWriter::Style SexpWriter::get_style(const std::string& tag) const {
     }
 
     if (tag == "set-arr~" || tag == "set-arr~b" || tag == "set-arr~c" || tag == "set-arr~d" ||
-        tag == "set-reg:" || tag == "set-reg::" || tag == "set-reg:d" || tag == "set-var") {
+        tag == "set-reg:" || tag == "set-reg::" || tag == "set-reg:d" || tag == "set-var" ||
+        tag == "assign") {
         return Style::Set;
     }
 
-    if (tag == "text" || tag == "str" || tag == "text-raw" ||
-        tag == "gm-text" || tag == "gm-text-raw") {
+    if (tag == "text" || tag == "str" || tag == "text-raw") {
         return Style::Inline;
     }
 

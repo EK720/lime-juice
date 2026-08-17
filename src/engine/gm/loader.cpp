@@ -19,10 +19,12 @@
 #include "loader.h"
 #include "opener.h"
 #include "semantic.h"
+#include "syntax.h"
 #include "walker.h"
 #include "../../charset.h"
 #include "../../utf8.h"
 
+#include <iterator>
 #include <optional>
 #include <unordered_set>
 #include <vector>
@@ -34,9 +36,16 @@ namespace {
 struct TextRecord {
     size_t end;
     int mode;
-    std::string text;
+    std::vector<AstNode> content;
     std::vector<uint8_t> bytes;
 };
+
+void append_text(std::vector<AstNode>& content, std::string& text) {
+    if (!text.empty()) {
+        content.push_back(AstNode::make_string(text));
+        text.clear();
+    }
+}
 
 bool is_sjis_pair(uint8_t lead, uint8_t trail) {
     bool valid_lead = (lead >= 0x81 && lead <= 0x9f) ||
@@ -56,6 +65,7 @@ std::optional<TextRecord> parse_text(const std::vector<uint8_t>& code, size_t st
     int mode = code[start + 1];
     size_t pos = start + 2;
     size_t payload_start = pos;
+    std::vector<AstNode> content;
     std::string text;
 
     while (pos < code.size() && code[pos] != 0) {
@@ -111,50 +121,45 @@ std::optional<TextRecord> parse_text(const std::vector<uint8_t>& code, size_t st
 
         auto decoded = cs.sjis_to_char(sjis);
 
-        if (!decoded.has_value()) {
-            return std::nullopt;
+        if (decoded.has_value()) {
+            text += char32_to_utf8(*decoded);
+        } else {
+            append_text(content, text);
+            content.push_back(AstNode::make_char_raw(
+                static_cast<uint8_t>(sjis[0]), static_cast<uint8_t>(sjis[1])));
         }
-
-        text += char32_to_utf8(*decoded);
     }
 
     if (pos >= code.size()) {
         return std::nullopt;
     }
 
-    return TextRecord{pos + 1, mode, std::move(text),
+    append_text(content, text);
+    if (content.empty()) content.push_back(AstNode::make_string(""));
+    return TextRecord{pos + 1, mode, std::move(content),
                       std::vector<uint8_t>(code.begin() + payload_start,
                                            code.begin() + pos)};
 }
 
-std::vector<uint8_t> canonical_text_bytes(
-    int mode, const std::string& text,
+std::optional<std::vector<uint8_t>> canonical_text_bytes(
+    int mode, const std::vector<AstNode>& content,
     const std::vector<std::vector<int>>& dict, const Charset& cs) {
     std::vector<uint8_t> result;
 
     if (mode == 2) {
-        for (unsigned char value : text) {
-            result.push_back(value == '\n' ? 0x04 : value);
+        for (const auto& item : content) {
+            if (!item.is_string()) return std::nullopt;
+            for (unsigned char value : item.str_val) {
+                result.push_back(value == '\n' ? 0x04 : value);
+            }
         }
         return result;
     }
 
-    for (char32_t ch : utf8_to_codepoints(text)) {
-        if (ch == U'\n') {
-            result.push_back(0x04);
-            continue;
-        }
-
-        auto sjis = cs.char_to_sjis(ch);
-
-        if (!sjis.has_value() || sjis->size() != 2) {
-            return {};
-        }
-
+    auto append_sjis = [&](const std::vector<int>& sjis) {
         size_t index = dict.size();
-
         for (size_t i = 0; i < dict.size(); i++) {
-            if (dict[i] == *sjis) {
+            if (dict[i] == sjis) {
                 index = i;
                 break;
             }
@@ -165,8 +170,29 @@ std::vector<uint8_t> canonical_text_bytes(
         } else if (index < dict.size()) {
             result.push_back(static_cast<uint8_t>(0x38 + index));
         } else {
-            result.push_back(static_cast<uint8_t>((*sjis)[0]));
-            result.push_back(static_cast<uint8_t>((*sjis)[1]));
+            result.push_back(static_cast<uint8_t>(sjis[0]));
+            result.push_back(static_cast<uint8_t>(sjis[1]));
+        }
+    };
+
+    for (const auto& item : content) {
+        if (item.is_string()) {
+            for (char32_t ch : utf8_to_codepoints(item.str_val)) {
+                if (ch == U'\n') {
+                    result.push_back(0x04);
+                    continue;
+                }
+
+                auto sjis = cs.char_to_sjis(ch);
+                if (!sjis.has_value() || sjis->size() != 2) {
+                    return std::nullopt;
+                }
+                append_sjis(*sjis);
+            }
+        } else if (item.is_char_raw() && item.raw_bytes.size() == 2) {
+            append_sjis({item.raw_bytes[0], item.raw_bytes[1]});
+        } else {
+            return std::nullopt;
         }
     }
 
@@ -232,7 +258,7 @@ AstNode load_mes(const std::string& path, Config& cfg) {
         size_t end = instruction.end - code_base;
 
         if (local_targets.count(instruction.start) != 0) {
-            nodes.push_back(AstNode::make_list("gm-label", {
+            nodes.push_back(AstNode::make_list("label", {
                 AstNode::make_integer(static_cast<int32_t>(instruction.start))
             }));
         }
@@ -241,28 +267,21 @@ AstNode load_mes(const std::string& path, Config& cfg) {
             ? parse_text(mes.code, start, mes.dictionary, cs)
             : std::nullopt;
 
+        auto canonical = text.has_value()
+            ? canonical_text_bytes(text->mode, text->content, mes.dictionary, cs)
+            : std::nullopt;
         if (instruction.opcode == 0x4a && text.has_value() &&
-            text->end == end) {
-            std::vector<AstNode> children = {
-                AstNode::make_integer(text->mode),
-                AstNode::make_string(text->text)
-            };
-            auto canonical = canonical_text_bytes(text->mode, text->text,
-                                                  mes.dictionary, cs);
-
-            if (canonical != text->bytes) {
-                std::vector<AstNode> source = {
-                    AstNode::make_string(text->text)
-                };
-                for (uint8_t value : text->bytes) {
-                    source.push_back(AstNode::make_integer(value));
-                }
-                children.push_back(AstNode::make_list("gm-text-source",
-                                                       std::move(source)));
+            text->end == end && canonical.has_value() &&
+            *canonical == text->bytes) {
+            std::vector<AstNode> children;
+            if (text->mode == 2) {
+                children.push_back(AstNode::make_keyword("mode"));
+                children.push_back(AstNode::make_integer(2));
             }
-
-            nodes.push_back(AstNode::make_list("gm-text",
-                                               std::move(children)));
+            children.insert(children.end(),
+                            std::make_move_iterator(text->content.begin()),
+                            std::make_move_iterator(text->content.end()));
+            nodes.push_back(AstNode::make_list("text", std::move(children)));
         } else if (instruction.opcode == 0x4a) {
             std::vector<AstNode> children = {
                 AstNode::make_integer(mes.code[start + 1])
@@ -270,7 +289,7 @@ AstNode load_mes(const std::string& path, Config& cfg) {
             for (size_t pos = start + 2; pos + 1 < end; pos++) {
                 children.push_back(AstNode::make_integer(mes.code[pos]));
             }
-            nodes.push_back(AstNode::make_list("gm-text-raw",
+            nodes.push_back(AstNode::make_list("text-raw",
                                                std::move(children)));
         } else {
             nodes.push_back(decode_instruction(mes.code, code_base,
@@ -279,7 +298,7 @@ AstNode load_mes(const std::string& path, Config& cfg) {
         }
     }
 
-    return AstNode::make_list("mes", std::move(nodes));
+    return AstNode::make_list("mes", fuse_syntax(std::move(nodes)));
 }
 
 } // namespace gm

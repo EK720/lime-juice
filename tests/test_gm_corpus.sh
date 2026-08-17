@@ -84,7 +84,9 @@ while IFS= read -r -d '' mes; do
         cmp "$mes" "$TMP/roundtrip.mes"
     fi
 
-    record_count=$(grep -c '^[[:space:]]*(gm-text 1 ' "$TMP/original.rkt" || true)
+    text_count=$(grep -c '^[[:space:]]*(text ' "$TMP/original.rkt" || true)
+    mode2_count=$(grep -c '^[[:space:]]*(text #:mode 2 ' "$TMP/original.rkt" || true)
+    record_count=$((text_count - mode2_count))
     if [ "$record_count" -eq 0 ]; then
         continue
     fi
@@ -92,10 +94,10 @@ while IFS= read -r -d '' mes; do
     mode1_files=$((mode1_files + 1))
     mode1_records=$((mode1_records + record_count))
 
-    perl -pe 's/^(\s*\(gm-text 1 "(?:\\.|[^"])*)"/$1あ"/' \
+    perl -pe 's/^(\s*\(text (?!#:mode 2\b).*)\)$/$1 "あ")/' \
         "$TMP/original.rkt" > "$TMP/grown.rkt"
 
-    grown_count=$(grep -c '^[[:space:]]*(gm-text 1 ' "$TMP/grown.rkt" || true)
+    grown_count=$(grep -c '^[[:space:]]*(text .* "あ")$' "$TMP/grown.rkt" || true)
     if [ "$grown_count" -ne "$record_count" ] || cmp -s "$TMP/original.rkt" "$TMP/grown.rkt"; then
         echo "failed to grow every mode-1 record" >&2
         exit 1

@@ -34,10 +34,10 @@ A typical source file begins like this:
 (mes
  (meta (engine 'GM) (charset "pc98") (compression 'beyond))
  (dict #\あ #\い #\う)
- (gm-mll-load "system.mll")
- (gm-text 1 "あいう")
- (gm-message-end)
- (gm-end))
+ (mll-load "system.mll")
+ (text "あいう")
+ (message-end)
+ (end))
 ```
 
 Remove `(compression 'beyond)` for unpacked output. Fermion source normally
@@ -52,8 +52,8 @@ All code addresses include that header and dictionary prefix.
 Dialogue is ordinary text:
 
 ```racket
-(gm-text 1 "日本語の台詞")
-(gm-text 2 "ASCII text")
+(text "日本語の台詞")
+(text #:mode 2 "ASCII text")
 ```
 
 Mode 1 uses the file dictionary and raw two-byte Shift-JIS characters. Mode 2
@@ -63,9 +63,10 @@ newline control.
 Resource names and other printable byte-string parameters are quoted strings:
 
 ```racket
-(gm-image-open "IMAGE.GPC")
-(gm-mes-jump "NEXT.MES")
-(gm-mll-load "SYSTEM.MLL")
+(image-open "IMAGE.GPC")
+(mes-jump "NEXT.MES")
+(mll-load "SYSTEM.MLL")
+(struct-assign (ref 15 0) "SCENE.GP4")
 ```
 
 Complete commands may be inserted, deleted, or reordered. Local control
@@ -73,10 +74,11 @@ targets use labels, so their encoded addresses are recalculated after an edit.
 
 ## Commands and unresolved form
 
-Known opcodes use semantic names such as `gm-if`, `gm-assign`, `gm-text-color`,
-`gm-mouse-command`, and `gm-save-slot`. The encodable fixture
-`tests/fixtures/gm-semantic.rkt` is the compact reference for every supported
-opcode and operand shape.
+Known opcodes use semantic names such as `if`, `assign`, `text-color`,
+`mouse-command`, and `save-slot`. As with the other engines, the `(engine 'GM)`
+metadata scopes those names, so they do not carry an engine prefix. The
+encodable fixture `tests/fixtures/gm-semantic.rkt` is the compact reference for
+every supported opcode and operand shape.
 
 `--no-resolve` keeps typed operands but writes numeric command names:
 
@@ -89,39 +91,39 @@ the existing Juice convention: `nop:48`, `nop:54`, `nop:66`, and `nop:127`.
 
 | Range | Area | Representative nodes |
 |---|---|---|
-| `0x30`-`0x42` | control flow and menus | `gm-for-start`, `gm-if`, `gm-gosub-if`, `gm-menu`, `gm-return` |
-| `0x43`-`0x4f` | assignment and text | `gm-assign`, `gm-string-copy`, `gm-text-window`, `gm-text` |
-| `0x50`-`0x63` | palette and graphics | `gm-message-end`, `gm-palette-set`, `gm-image-open`, `gm-blit` |
-| `0x64`-`0x71` | input, files, and drivers | `gm-input`, `gm-mouse-command`, `gm-mes-jump`, `gm-mll-load`, `gm-video-command` |
-| `0x72`-`0x7f` | save state and resources | `gm-file-save-range`, `gm-save-slot`, `gm-image-load`, `gm-music-command` |
-| `0x80`-`0x85` | Be-Yond extensions | `gm-beyond-flag-test`, `gm-for-end`, `gm-push-reference` |
+| `0x30`-`0x42` | control flow and menus | `for-start`, `if`, `gosub-if`, `menu`, `return` |
+| `0x43`-`0x4f` | assignment and text | `assign`, `string-copy`, `text-window`, `text` |
+| `0x50`-`0x63` | palette and graphics | `message-end`, `palette-set`, `image-open`, `blit` |
+| `0x64`-`0x71` | input, files, and drivers | `input`, `mouse-command`, `mes-jump`, `mll-load`, `video-command` |
+| `0x72`-`0x7f` | save state and resources | `file-save-range`, `save-slot`, `image-load`, `music-command` |
+| `0x80`-`0x85` | Be-Yond extensions | `beyond-flag-test`, `for-end`, `push-reference` |
 
 ## Expressions
 
 The binary stores expressions in postfix order. Juice presents a balanced
-stream as a conventional nested tree while retaining literal widths:
+stream as the same conventional nested tree used by the other engines:
 
 ```racket
-(gm-expr
- (== (& (gm-ref 12 86) (gm-imm 1 32))
-     (gm-imm 1 0)))
+(== (& (ref 12 86) 32) 0)
 ```
 
 The binary operators are `*`, `/`, `%`, `+`, `-`, `&`, `|`, `==`, `!=`, `<`,
 `<=`, `>`, `>=`, `&&`, and `||`.
 
-- `(gm-imm WIDTH VALUE)` is an integer with its original 1- to 4-byte width.
-- `(gm-ref TOKEN OFFSET [INDEX])` is a typed reference. Tokens 5 through 10
+- Integers are ordinary numbers. The compiler selects the smallest native
+  1- to 4-byte encoding that holds the value.
+- `(ref TOKEN OFFSET [INDEX])` is a typed reference. Tokens 5 through 10
   carry a nested index expression.
-- `(gm-random LOW HIGH)` is the initial random-range operand.
-- `(gm-expr)` is the engine's empty/default expression.
+- `(random LOW HIGH)` is the initial random-range operand.
+- `default` is the engine's empty/default expression where an operand position
+  cannot simply be omitted.
 
 Some shipped scripts contain a postfix stream that cannot form a tree, such as
 an expression ending in an extra operator. Those rare cases remain flat and in
 byte order:
 
 ```racket
-(gm-expr (gm-imm 1 10) ==)
+(postfix 10 ==)
 ```
 
 ## Parameters and byte strings
@@ -129,14 +131,14 @@ byte order:
 Generic parameters can be expressions, strings, or a typed reference:
 
 ```racket
-(gm-text-window
- (gm-expr (gm-imm 1 1))
+(text-window
+ 1
  "AB"
- (gm-ref-param (gm-ref 15 600)))
+ (ref-param (ref 15 600)))
 ```
 
 Printable ASCII uses a quoted string. Arbitrary payloads use
-`(gm-string-bytes BYTE ...)`, which is also what `--no-decode` emits. The
+`(string-bytes BYTE ...)`, which is also what `--no-decode` emits. The
 reference-parameter terminator used by Fermion is present throughout the
 Be-Yond retail corpus too; the dialects share this parameter grammar.
 
@@ -151,41 +153,63 @@ Mode 1 payload tokens are:
 | `a0`-`df` | dictionary entry `token - 0x38` |
 | otherwise | raw two-byte Shift-JIS character |
 
-Mode 2 stores printable ASCII and uses the same `04` newline control. When mode
-1 uses a valid but non-canonical byte spelling, Juice adds `gm-text-source`.
-An unchanged node recompiles to its original bytes; appended text preserves
-the source prefix and encodes only the suffix.
+Mode 2 stores printable ASCII and uses the same `04` newline control. Unknown
+Shift-JIS extensions and gaiji remain local escapes inside otherwise editable
+text instead of making the whole line raw:
+
+```racket
+(text "known text" (chr-raw 235 160) "more text")
+```
+
+If an entire record cannot be represented canonically without changing its
+original bytes, Juice retains that rare record as `text-raw`.
 
 If character decoding is disabled or text cannot be represented in the
 selected charset, Juice emits the exact payload:
 
 ```racket
-(gm-text-raw 1 24 25 4 130 164)
+(text-raw 1 24 25 4 130 164)
 ```
 
 `--no-decode` affects dictionary entries, text, and byte-string parameters. It
 does not turn semantic commands into `(raw ...)` blocks.
 
-## Labels and addresses
+## Calls, loops, labels, and addresses
 
-Local and external addresses are intentionally distinct:
+Common native control conventions are lifted automatically. An opcode `0x40`
+call, its dispatcher terminator, and its private continuation label become one
+node:
 
 ```racket
-(gm-gosub-if-save
- (gm-local-address 359)
- (gm-address 31010)
- (gm-expr))
-(gm-end)
-(gm-label 359)
-(gm-text 1 "続き")
+(call (address 31010))
+(text "続き")
 ```
 
-The `gm-label` number is an identifier copied from the input address; it is not
-necessarily the address emitted after editing. At compile time, each
-`gm-local-address` resolves to the current output position of its matching
-label. This makes changed-length and structural edits safe.
+Likewise, the native IF-frame, `while-continue`, and exit label are presented as
+a structured loop:
 
-`gm-address` is a literal external address, commonly an entry point in a loaded
+```racket
+(while (< (ref 12 18) 50)
+ (assign (ref 5 0 (ref 12 18)) 0)
+ (assign (ref 12 18) (+ (ref 12 18) 1)))
+```
+
+The compiler regenerates both conventions and their internal continuation
+addresses. Explicit labels remain only for control flow that is shared or
+cannot be reduced without changing its meaning:
+
+```racket
+(if (local-address 500) (== (ref 11 1) 0))
+...
+(label 500)
+```
+
+The `label` number is an identifier copied from the input address; it is not
+necessarily the address emitted after editing. At compile time, each
+`local-address` resolves to the current output position of its matching label.
+This makes changed-length and structural edits safe.
+
+`address` is a literal external address, commonly an entry point in a loaded
 MLL, and is never relocated. A missing or duplicate local label is a compile
 error. Native targets must land on instruction boundaries, so labels always
 appear between complete source nodes.
@@ -207,12 +231,12 @@ Be-Yond adds six commands beyond the Fermion table:
 
 | Opcode | Node | Encoding and role |
 |---|---|---|
-| `0x80` | `gm-beyond-flag-test` | no operands; tests the engine helper flag |
-| `0x81` | `gm-beyond-external-call` | parameter list; calls an external far service and stores `AX` |
-| `0x82` | `gm-beyond-bank` | parameter list; selects a graphics bank |
-| `0x83` | `gm-for-end` | loop id, local target, and expression |
-| `0x84` | `gm-push-reference` | reference plus two posthook bytes |
-| `0x85` | `gm-pop-reference` | reference plus two posthook bytes |
+| `0x80` | `beyond-flag-test` | no operands; tests the engine helper flag |
+| `0x81` | `beyond-external-call` | parameter list; calls an external far service and stores `AX` |
+| `0x82` | `beyond-bank` | parameter list; selects a graphics bank |
+| `0x83` | `for-end` | loop id, local target, and expression |
+| `0x84` | `push-reference` | reference plus two posthook bytes |
+| `0x85` | `pop-reference` | reference plus two posthook bytes |
 
 The tiny `0x84` and `0x85` handlers only set flags and return, but the dispatcher
 tests those flags immediately and continues into native push/pop posthooks
@@ -220,9 +244,9 @@ before fetching another opcode. Those paths consume the reference and two
 trailing bytes, so the complete static instruction is encoded as `ref + 2`.
 
 Two base-table names have game-specific provenance. The `0x60` and `0x61`
-`gm-window-blit-setup` names describe Fermion handlers; the corresponding
+`window-blit-setup` names describe Fermion handlers; the corresponding
 Be-Yond table slots are GDC data and neither opcode occurs in its MES corpus.
-`gm-music-command` (`0x7a`) controls the Pirorin/Witch2 `.WM` music path.
+`music-command` (`0x7a`) controls the Pirorin/Witch2 `.WM` music path.
 
 ## Validation and limits
 
