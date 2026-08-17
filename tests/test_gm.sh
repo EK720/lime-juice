@@ -48,6 +48,17 @@ printf '%b' '\x02\x00\x33\x09\x00\x02\x01\x00\x00\x00' \
     > "$TMP/expected-expression.mes"
 cmp "$TMP/expected-expression.mes" "$TMP/expression-edited.mes"
 
+# GM expressions are preserved as native postfix streams, including observed
+# streams whose final term before the terminator is an operator.
+printf '%b' '\x02\x00\x3b\x01\x0a\x28\x00\x00' > "$TMP/trailing-operator.mes"
+"$JUICE" -d -f -e GM -o "$TMP/trailing-operator.rkt" \
+    "$TMP/trailing-operator.mes"
+grep -q '(gm-eval (gm-expr (gm-imm 1 10) eq))' \
+    "$TMP/trailing-operator.rkt"
+"$JUICE" -c -f -o "$TMP/trailing-operator-output.mes" \
+    "$TMP/trailing-operator.rkt"
+cmp "$TMP/trailing-operator.mes" "$TMP/trailing-operator-output.mes"
+
 # Header: two dictionary entries (あ, い). Code contains the observed GM
 # SYSTEM.MLL loader signature, a call with a local continuation at 0x27 and an
 # external MLL target at 0x7912, mode-1 dictionary/raw text, and mode-2 ASCII.

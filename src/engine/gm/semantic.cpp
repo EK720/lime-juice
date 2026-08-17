@@ -1058,14 +1058,14 @@ const char* opcode_name(uint8_t opcode) {
         case 0x77: return "gm-image-load-alt";
         case 0x78: return "gm-vram-bank";
         case 0x79: return "gm-file-date";
-        case 0x7a: return "gm-driver-command";
+        case 0x7a: return "gm-music-command";
         case 0x7b: return "gm-hit-test";
         case 0x7c: return "gm-hook";
         case 0x7d: return "gm-driver-state";
         case 0x7e: return "gm-progress-merge";
         case 0x7f: return "gm-nop-7f";
         case 0x80: return "gm-beyond-flag-test";
-        case 0x81: return "gm-beyond-mll-call";
+        case 0x81: return "gm-beyond-external-call";
         case 0x82: return "gm-beyond-bank";
         case 0x83: return "gm-for-end";
         case 0x84: return "gm-push-reference";

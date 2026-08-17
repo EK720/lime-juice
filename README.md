@@ -191,13 +191,13 @@ When compiling, juice reads settings from the `(meta ...)` block at the top of t
 
 General Message scripts use `(engine 'GM)`. Support is derived from and
 corpus-validated against the system-1 Rev.95:06:30 interpreters in *Fermion:
-Mirai kara no Houmonsha* and *Be-Yond: Kurodaishou ni Mirareteru*. Commands,
-expressions, typed references, parameter lists, and text are emitted as
-semantic `gm-*` nodes. A generated `(gm-layout ...)` block records source spans
-and native local address fields, allowing the compiler to backpatch control
-targets whenever any semantic node changes length. Legacy `(raw ...)` nodes
-remain accepted for compatibility, but newly decoded valid bytecode does not
-use them.
+Mirai kara no Houmonsha* and *Be-Yond: Kurodaishou ni Mirareteru* (using its
+unpacked MES payloads). Commands, expressions, typed references, parameter
+lists, and text are emitted as semantic `gm-*` nodes. A generated
+`(gm-layout ...)` block records source spans and native local address fields,
+allowing the compiler to backpatch control targets whenever any semantic node
+changes length. Legacy `(raw ...)` nodes remain accepted for compatibility,
+but newly decoded valid bytecode does not use them.
 
 ### Input/Output Handling
 
