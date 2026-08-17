@@ -43,12 +43,13 @@ SexpWriter::Style SexpWriter::get_style(const std::string& tag) const {
         return Style::Set;
     }
 
-    if (tag == "text" || tag == "str" || tag == "text-raw" || tag == "gm-text") {
+    if (tag == "text" || tag == "str" || tag == "text-raw" ||
+        tag == "gm-text" || tag == "gm-text-raw") {
         return Style::Inline;
     }
 
     // structural containers: one statement per line
-    if (tag == "mes" || tag == "gm-layout" || tag == "seg*" || tag == "loop" ||
+    if (tag == "mes" || tag == "seg*" || tag == "loop" ||
         tag == "<>" || tag == "<*>" || tag == "</>" || tag == "<+>" ||
         tag == "/" || tag == "//" || tag == "+" ||
         tag == "repeat") {
@@ -191,6 +192,7 @@ void SexpWriter::write_list(std::string& out, const AstNode& node, int indent) {
 
             break;
 
+        case Style::Inline:
         case Style::Default: {
             // greedy word-wrap: pack children onto lines until width exceeded
             int col;

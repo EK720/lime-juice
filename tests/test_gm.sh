@@ -40,7 +40,8 @@ cmp "$TMP/heuristic.mes" "$TMP/heuristic-output.mes"
 # directly and moves the following instruction boundary from 0x08 to 0x09.
 printf '%b' '\x02\x00\x33\x08\x00\x01\x01\x00\x00' > "$TMP/expression.mes"
 "$JUICE" -d -f -e GM -o "$TMP/expression.rkt" "$TMP/expression.mes"
-grep -q '(gm-if (gm-address 8) (gm-expr (gm-imm 1 1)))' "$TMP/expression.rkt"
+grep -q '(gm-if (gm-local-address 8) (gm-expr (gm-imm 1 1)))' "$TMP/expression.rkt"
+grep -q '(gm-label 8)' "$TMP/expression.rkt"
 sed 's/(gm-imm 1 1)/(gm-imm 2 1)/' \
     "$TMP/expression.rkt" > "$TMP/expression-edited.rkt"
 "$JUICE" -c -f -o "$TMP/expression-edited.mes" "$TMP/expression-edited.rkt"
@@ -48,12 +49,19 @@ printf '%b' '\x02\x00\x33\x09\x00\x02\x01\x00\x00\x00' \
     > "$TMP/expected-expression.mes"
 cmp "$TMP/expected-expression.mes" "$TMP/expression-edited.mes"
 
-# GM expressions are preserved as native postfix streams, including observed
-# streams whose final term before the terminator is an operator.
+# Balanced postfix streams become the conventional nested Juice expression
+# tree. Anomalous shipped streams still retain their native flat form.
+printf '%b' '\x02\x00\x3b\x01\x02\x01\x03\x23\x00\x00' > "$TMP/balanced.mes"
+"$JUICE" -d -f -e GM -o "$TMP/balanced.rkt" "$TMP/balanced.mes"
+grep -q '(gm-eval (gm-expr (+ (gm-imm 1 2) (gm-imm 1 3))))' \
+    "$TMP/balanced.rkt"
+"$JUICE" -c -f -o "$TMP/balanced-output.mes" "$TMP/balanced.rkt"
+cmp "$TMP/balanced.mes" "$TMP/balanced-output.mes"
+
 printf '%b' '\x02\x00\x3b\x01\x0a\x28\x00\x00' > "$TMP/trailing-operator.mes"
 "$JUICE" -d -f -e GM -o "$TMP/trailing-operator.rkt" \
     "$TMP/trailing-operator.mes"
-grep -q '(gm-eval (gm-expr (gm-imm 1 10) eq))' \
+grep -q '(gm-eval (gm-expr (gm-imm 1 10) ==))' \
     "$TMP/trailing-operator.rkt"
 "$JUICE" -c -f -o "$TMP/trailing-operator-output.mes" \
     "$TMP/trailing-operator.rkt"
@@ -66,15 +74,29 @@ printf '%b' '\x06\x00\x82\xa0\x82\xa2\x6e\x11system.mll\x00\x00\x40\x27\x00\x12\
 
 "$JUICE" -d -f --auto-engine -o "$TMP/output.rkt" "$TMP/input.mes"
 grep -q "(engine 'GM)" "$TMP/output.rkt"
-grep -q '(gm-layout' "$TMP/output.rkt"
-grep -q '(reloc 21 39)' "$TMP/output.rkt"
-grep -q '(gm-mll-load (gm-string-bytes 115 121 115 116 101 109 46 109 108 108))' "$TMP/output.rkt"
+grep -q '(gm-local-address 39)' "$TMP/output.rkt"
+grep -q '(gm-label 39)' "$TMP/output.rkt"
+grep -q '(gm-mll-load "system.mll")' "$TMP/output.rkt"
 grep -q '(gm-text 1 "あい\\nう"' "$TMP/output.rkt"
 grep -q '(gm-text 2 "BS")' "$TMP/output.rkt"
 ! grep -q '(raw ' "$TMP/output.rkt"
 
 "$JUICE" -c -f -o "$TMP/output.mes" "$TMP/output.rkt"
 cmp "$TMP/input.mes" "$TMP/output.mes"
+
+# Labels make structural edits relocatable too: insert a new node before the
+# continuation without maintaining a parallel span table.
+awk '/\(gm-label 39\)/ { print " (gm-text 2 \"X\")" } { print }' \
+    "$TMP/output.rkt" > "$TMP/inserted.rkt"
+"$JUICE" -c -f -o "$TMP/inserted.mes" "$TMP/inserted.rkt"
+printf '%b' '\x06\x00\x82\xa0\x82\xa2\x6e\x11system.mll\x00\x00\x40\x2b\x00\x12\x79\x00\x4a\x01\x18\x19\x04\x82\xa4\x00\x4a\x02BS\x00\x4a\x02X\x00\x00' > "$TMP/expected-inserted.mes"
+cmp "$TMP/expected-inserted.mes" "$TMP/inserted.mes"
+
+grep -v '(gm-label 39)' "$TMP/output.rkt" > "$TMP/missing-label.rkt"
+"$JUICE" -c -f -o "$TMP/missing-label.mes" "$TMP/missing-label.rkt" \
+    > "$TMP/missing-label.log" 2>&1 || true
+test ! -e "$TMP/missing-label.mes"
+grep -q 'local address has no matching gm-label: 39' "$TMP/missing-label.log"
 
 # Grow mode-1 text through both dictionary and raw Shift-JIS paths. The local
 # continuation moves by one byte while the external MLL target is unchanged.
@@ -89,6 +111,8 @@ cmp "$TMP/expected-mode1.mes" "$TMP/mode1-edited.mes"
 grep -q "(engine 'GM)" "$TMP/preset.rkt"
 "$JUICE" -d -f -p beyond -o "$TMP/beyond-preset.rkt" "$TMP/input.mes"
 grep -q "(engine 'GM)" "$TMP/beyond-preset.rkt"
+"$JUICE" -c -f -p beyond -o "$TMP/beyond-preset.mes" "$TMP/output.rkt"
+test "$(od -An -tu1 -N1 "$TMP/beyond-preset.mes" | tr -d ' ')" = 255
 
 sed 's/(gm-text 2 "BS")/(gm-text 2 "BIGGER")/' \
     "$TMP/output.rkt" > "$TMP/edited.rkt"
@@ -107,22 +131,38 @@ cmp "$TMP/expected-newline.mes" "$TMP/newline.mes"
 "$JUICE" -d -f --auto-engine -o "$TMP/newline-output.rkt" "$TMP/newline.mes"
 grep -q '(gm-text 2 "B\\nS")' "$TMP/newline-output.rkt"
 
-awk 'BEGIN {
-    print "(mes"
-    print " (meta (engine '\''GM) (charset \"pc98\"))"
-    print " (dict)"
-    print " (gm-layout (span 2 4))"
-    print " (raw 0 0 0))"
-}' > "$TMP/bad-raw.rkt"
-"$JUICE" -c -f -o "$TMP/bad-raw.mes" "$TMP/bad-raw.rkt" \
-    > "$TMP/bad-raw.log" 2>&1 || true
+# Decompile controls affect only their intended layer. Commands remain
+# semantic with --no-decode, while --no-resolve uses the cmd:N escape hatch.
+"$JUICE" -d -f --no-decode -e GM -o "$TMP/no-decode.rkt" "$TMP/input.mes"
+grep -q '(gm-mll-load (gm-string-bytes 115 121 115 116 101 109 46 109 108 108))' \
+    "$TMP/no-decode.rkt"
+grep -q '(gm-text-raw 1 24 25 4 130 164)' "$TMP/no-decode.rkt"
+"$JUICE" -c -f -o "$TMP/no-decode.mes" "$TMP/no-decode.rkt"
+cmp "$TMP/input.mes" "$TMP/no-decode.mes"
 
-if [ -e "$TMP/bad-raw.mes" ]; then
-    echo "GM compiler accepted a length-changing raw edit" >&2
-    exit 1
-fi
+"$JUICE" -d -f --no-resolve -e GM -o "$TMP/no-resolve.rkt" "$TMP/input.mes"
+grep -q '(cmd:110 "system.mll")' "$TMP/no-resolve.rkt"
+grep -q '(cmd:64 (gm-local-address 39) (gm-address 30994) (gm-expr))' \
+    "$TMP/no-resolve.rkt"
+"$JUICE" -c -f -o "$TMP/no-resolve.mes" "$TMP/no-resolve.rkt"
+cmp "$TMP/input.mes" "$TMP/no-resolve.mes"
 
-grep -q 'raw nodes with layout metadata cannot change length' "$TMP/bad-raw.log"
+# Be-Yond's retail 0xff wrapper is selected in metadata, auto-detected on
+# input, and deterministically regenerated.
+sed "s/(charset \"pc98\")/(charset \"pc98\") (compression 'beyond)/" \
+    "$TMP/output.rkt" > "$TMP/packed-source.rkt"
+"$JUICE" -c -f -o "$TMP/packed.mes" "$TMP/packed-source.rkt"
+test "$(od -An -tu1 -N1 "$TMP/packed.mes" | tr -d ' ')" = 255
+"$JUICE" -d -f --auto-engine -o "$TMP/packed.rkt" "$TMP/packed.mes"
+grep -q "(compression 'beyond)" "$TMP/packed.rkt"
+cmp "$TMP/packed-source.rkt" "$TMP/packed.rkt"
+"$JUICE" -c -f -o "$TMP/packed-again.mes" "$TMP/packed.rkt"
+cmp "$TMP/packed.mes" "$TMP/packed-again.mes"
+
+"$JUICE" -c -f --auto-wrap -o "$TMP/wrapped.mes" "$TMP/output.rkt" \
+    > "$TMP/wrapped.log" 2>&1 || true
+test ! -e "$TMP/wrapped.mes"
+grep -q -- '--auto-wrap is not supported for GM scripts' "$TMP/wrapped.log"
 
 # Every known base opcode and Be-Yond extension has a hand-written semantic
 # representative. Compile it, decompile it without raw fallback, and demand a
@@ -136,8 +176,7 @@ grep -q '(gm-pop-reference ' "$TMP/semantic.rkt"
 "$JUICE" -c -f -o "$TMP/semantic-roundtrip.mes" "$TMP/semantic.rkt"
 cmp "$TMP/semantic.mes" "$TMP/semantic-roundtrip.mes"
 
-# Hand-written GM sources have no layout metadata, but they still cannot exceed
-# the engine's 16-bit file-address space.
+# GM files cannot exceed the engine's 16-bit file-address space.
 awk 'BEGIN {
     print "(mes"
     print " (meta (engine '\''GM) (charset \"pc98\"))"

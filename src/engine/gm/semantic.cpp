@@ -7,6 +7,14 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
 
 #include "semantic.h"
 
@@ -15,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace gm {
@@ -31,21 +40,21 @@ AstNode list(const std::string& tag, std::vector<AstNode> children = {}) {
 
 const char* operator_name(uint8_t token) {
     switch (token) {
-        case 0x20: return "mul";
-        case 0x21: return "div";
-        case 0x22: return "mod";
-        case 0x23: return "add";
-        case 0x24: return "sub";
-        case 0x25: return "bit-and";
-        case 0x26: return "bit-or";
-        case 0x28: return "eq";
-        case 0x29: return "ne";
-        case 0x2a: return "lt";
-        case 0x2b: return "le";
-        case 0x2c: return "gt";
-        case 0x2d: return "ge";
-        case 0x2e: return "logical-and";
-        case 0x2f: return "logical-or";
+        case 0x20: return "*";
+        case 0x21: return "/";
+        case 0x22: return "%";
+        case 0x23: return "+";
+        case 0x24: return "-";
+        case 0x25: return "&";
+        case 0x26: return "|";
+        case 0x28: return "==";
+        case 0x29: return "!=";
+        case 0x2a: return "<";
+        case 0x2b: return "<=";
+        case 0x2c: return ">";
+        case 0x2d: return ">=";
+        case 0x2e: return "&&";
+        case 0x2f: return "||";
         default: return nullptr;
     }
 }
@@ -81,10 +90,13 @@ bool literal_value(const AstNode& expression, uint32_t& value,
 class Decoder {
 public:
     Decoder(const std::vector<uint8_t>& code, size_t code_base,
-            const InstructionSpan& instruction)
+            const InstructionSpan& instruction,
+            const std::unordered_set<size_t>& local_fields,
+            bool resolve, bool decode_strings)
         : code_(code), base_(code_base), end_(instruction.end - code_base),
           pos_(instruction.start - code_base + 1),
-          opcode_(instruction.opcode) {
+          opcode_(instruction.opcode), local_fields_(local_fields),
+          resolve_(resolve), decode_strings_(decode_strings) {
         if (instruction.start < code_base || instruction.end < instruction.start ||
             end_ > code.size()) {
             throw std::runtime_error("gm: invalid semantic instruction span");
@@ -196,17 +208,45 @@ private:
                 byte();
                 const char* name = operator_name(token);
 
-                if (name != nullptr) {
-                    terms.push_back(AstNode::make_symbol(name));
-                } else {
-                    terms.push_back(list("gm-op", {integer(token)}));
+                if (name == nullptr) {
+                    throw std::runtime_error("gm: unsupported expression operator");
                 }
+                terms.push_back(AstNode::make_symbol(name));
             } else {
                 terms.push_back(operand(false));
             }
         }
 
         zero();
+
+        // GM stores expressions as postfix streams. Present balanced streams
+        // as the same nested operator trees used by the older Juice engines,
+        // but retain the native flat stream for malformed expressions found
+        // in shipped data (for example a trailing operator).
+        std::vector<AstNode> stack;
+
+        for (const auto& term : terms) {
+            if (!term.is_symbol()) {
+                stack.push_back(term);
+                continue;
+            }
+
+            if (stack.size() < 2) {
+                return list("gm-expr", std::move(terms));
+            }
+
+            AstNode right = std::move(stack.back());
+            stack.pop_back();
+            AstNode left = std::move(stack.back());
+            stack.pop_back();
+            stack.push_back(list(term.str_val,
+                                 {std::move(left), std::move(right)}));
+        }
+
+        if (stack.size() == 1) {
+            return list("gm-expr", {std::move(stack.back())});
+        }
+
         return list("gm-expr", std::move(terms));
     }
 
@@ -216,14 +256,27 @@ private:
         while (peek() != 0) {
             if (peek() == 0x11) {
                 byte();
-                std::vector<AstNode> string_bytes;
+                std::vector<uint8_t> string_bytes;
 
                 while (peek() != 0) {
-                    string_bytes.push_back(integer(byte()));
+                    string_bytes.push_back(byte());
                 }
 
                 zero();
-                values.push_back(list("gm-string-bytes", std::move(string_bytes)));
+                bool printable = decode_strings_;
+                for (uint8_t value : string_bytes) {
+                    printable = printable && value >= 0x20 && value <= 0x7e;
+                }
+
+                if (printable) {
+                    values.push_back(AstNode::make_string(std::string(
+                        string_bytes.begin(), string_bytes.end())));
+                } else {
+                    std::vector<AstNode> raw;
+                    raw.reserve(string_bytes.size());
+                    for (uint8_t value : string_bytes) raw.push_back(integer(value));
+                    values.push_back(list("gm-string-bytes", std::move(raw)));
+                }
             } else if (peek() == 0x0f) {
                 values.push_back(list("gm-ref-param", {reference()}));
                 zero();
@@ -249,7 +302,23 @@ private:
     }
 
     AstNode address() {
-        return list("gm-address", {integer(u16())});
+        size_t field = base_ + pos_;
+        uint16_t target = u16();
+        return list(local_fields_.count(field) != 0
+                        ? "gm-local-address" : "gm-address",
+                    {integer(target)});
+    }
+
+    std::string command_name() const {
+        if (!resolve_) {
+            return "cmd:" + std::to_string(opcode_);
+        }
+
+        const char* name = opcode_name(opcode_);
+        if (name == nullptr) {
+            throw std::runtime_error("gm: unsupported semantic opcode");
+        }
+        return name;
     }
 
     AstNode menu() {
@@ -269,7 +338,9 @@ private:
                     uint32_t ignored = 0;
 
                     if (i == 4 && literal_value(value, ignored, &width) && width == 2) {
-                        value = list("gm-callback", {std::move(value)});
+                        value = list("gm-callback", {
+                            list("gm-local-address", {integer(ignored)})
+                        });
                     }
 
                     children.push_back(std::move(value));
@@ -314,7 +385,7 @@ private:
         }
 
         zero();
-        return list(opcode_name(opcode_), std::move(children));
+        return list(command_name(), std::move(children));
     }
 
     AstNode assignment() {
@@ -358,7 +429,7 @@ private:
             }
         }
 
-        return list(opcode_name(opcode_), std::move(children));
+        return list(command_name(), std::move(children));
     }
 
     AstNode struct_assignment() {
@@ -368,7 +439,7 @@ private:
         if (peek() == 0x0f) {
             AstNode source = reference();
             zero();
-            return list(opcode_name(opcode_), {
+            return list(command_name(), {
                 std::move(destination), integer(word),
                 list("gm-ref-source", {std::move(source)})
             });
@@ -386,7 +457,7 @@ private:
             payload.push_back(integer(byte()));
         }
 
-        return list(opcode_name(opcode_), {
+        return list(command_name(), {
             std::move(destination), list("gm-inline", std::move(payload))
         });
     }
@@ -403,7 +474,7 @@ private:
             byte();
             AstNode source = reference();
             zero();
-            return list(opcode_name(opcode_), {
+            return list(command_name(), {
                 std::move(destination),
                 list("gm-ref-source", {integer(first), std::move(source)})
             });
@@ -420,15 +491,15 @@ private:
         std::vector<AstNode> children = {integer(trailing)};
         children.insert(children.end(), std::make_move_iterator(source.begin()),
                         std::make_move_iterator(source.end()));
-        return list(opcode_name(opcode_), {
+        return list(command_name(), {
             std::move(destination), list("gm-inline-source", std::move(children))
         });
     }
 
     AstNode decode_body() {
-        const char* name = opcode_name(opcode_);
+        std::string name = command_name();
 
-        if (name == nullptr || opcode_ == 0x4a) {
+        if (opcode_ == 0x4a) {
             throw std::runtime_error("gm: unsupported semantic opcode");
         }
 
@@ -593,6 +664,9 @@ private:
     size_t end_;
     size_t pos_;
     uint8_t opcode_;
+    const std::unordered_set<size_t>& local_fields_;
+    bool resolve_;
+    bool decode_strings_;
 };
 
 int checked_integer(const AstNode& node, const std::string& what,
@@ -645,34 +719,72 @@ void emit_reference(ByteWriter& out, const AstNode& reference) {
 }
 
 uint8_t operator_token(const AstNode& node) {
-    if (node.is_list("gm-op")) {
-        expect_children(node, 1);
-        int token = checked_integer(node.children[0], "expression operator",
-                                    0x20, 0x2f);
-        if (token == 0x27) {
-            throw std::runtime_error("gm: expression operator 0x27 is invalid");
-        }
-        return static_cast<uint8_t>(token);
-    }
-
-    if (!node.is_symbol()) {
+    std::string name;
+    if (node.is_symbol()) {
+        name = node.str_val;
+    } else if (node.is_list()) {
+        name = node.tag;
+    } else {
         throw std::runtime_error("gm: expected expression term or operator");
     }
 
     static const std::unordered_map<std::string, uint8_t> operators = {
-        {"mul", 0x20}, {"div", 0x21}, {"mod", 0x22}, {"add", 0x23},
-        {"sub", 0x24}, {"bit-and", 0x25}, {"bit-or", 0x26},
-        {"eq", 0x28}, {"ne", 0x29}, {"lt", 0x2a}, {"le", 0x2b},
-        {"gt", 0x2c}, {"ge", 0x2d}, {"logical-and", 0x2e},
-        {"logical-or", 0x2f}
+        {"*", 0x20}, {"/", 0x21}, {"%", 0x22}, {"+", 0x23},
+        {"-", 0x24}, {"&", 0x25}, {"|", 0x26}, {"==", 0x28},
+        {"!=", 0x29}, {"<", 0x2a}, {"<=", 0x2b}, {">", 0x2c},
+        {">=", 0x2d}, {"&&", 0x2e}, {"||", 0x2f}
     };
-    auto found = operators.find(node.str_val);
+    auto found = operators.find(name);
 
     if (found == operators.end()) {
-        throw std::runtime_error("gm: unknown expression operator: " + node.str_val);
+        throw std::runtime_error("gm: unknown expression operator: " + name);
     }
 
     return found->second;
+}
+
+void emit_expression_term(ByteWriter& out, const AstNode& term,
+                          bool& emitted_any) {
+    if (term.is_list("gm-imm")) {
+        expect_children(term, 2);
+        int width = checked_integer(term.children[0], "literal width", 1, 4);
+
+        if (!term.children[1].is_integer()) {
+            throw std::runtime_error("gm: invalid literal value");
+        }
+
+        uint32_t value = static_cast<uint32_t>(term.children[1].int_val);
+
+        if (width < 4 && value >= (1u << (width * 8))) {
+            throw std::runtime_error("gm: literal does not fit its width");
+        }
+
+        out.emit(static_cast<uint8_t>(width));
+        for (int byte_index = 0; byte_index < width; byte_index++) {
+            out.emit(static_cast<uint8_t>(value >> (byte_index * 8)));
+        }
+    } else if (term.is_list("gm-ref")) {
+        emit_reference(out, term);
+    } else if (term.is_list("gm-random")) {
+        if (emitted_any) {
+            throw std::runtime_error("gm: random range must be the first expression term");
+        }
+        expect_children(term, 2);
+        out.emit(0x32);
+        out.emit_u16_le(static_cast<uint16_t>(checked_integer(
+            term.children[0], "random lower bound", 0, 65535)));
+        out.emit_u16_le(static_cast<uint16_t>(checked_integer(
+            term.children[1], "random upper bound", 0, 65535)));
+    } else if (term.is_list()) {
+        expect_children(term, 2);
+        emit_expression_term(out, term.children[0], emitted_any);
+        emit_expression_term(out, term.children[1], emitted_any);
+        out.emit(operator_token(term));
+    } else {
+        out.emit(operator_token(term));
+    }
+
+    emitted_any = true;
 }
 
 void emit_expression(ByteWriter& out, const AstNode& expression) {
@@ -680,42 +792,9 @@ void emit_expression(ByteWriter& out, const AstNode& expression) {
         throw std::runtime_error("gm: expected gm-expr");
     }
 
-    for (size_t i = 0; i < expression.children.size(); i++) {
-        const auto& term = expression.children[i];
-
-        if (term.is_list("gm-imm")) {
-            expect_children(term, 2);
-            int width = checked_integer(term.children[0], "literal width", 1, 4);
-
-            if (!term.children[1].is_integer()) {
-                throw std::runtime_error("gm: invalid literal value");
-            }
-
-            uint32_t value = static_cast<uint32_t>(term.children[1].int_val);
-
-            if (width < 4 && value >= (1u << (width * 8))) {
-                throw std::runtime_error("gm: literal does not fit its width");
-            }
-
-            out.emit(static_cast<uint8_t>(width));
-            for (int byte_index = 0; byte_index < width; byte_index++) {
-                out.emit(static_cast<uint8_t>(value >> (byte_index * 8)));
-            }
-        } else if (term.is_list("gm-ref")) {
-            emit_reference(out, term);
-        } else if (term.is_list("gm-random")) {
-            if (i != 0) {
-                throw std::runtime_error("gm: random range must be the first expression term");
-            }
-            expect_children(term, 2);
-            out.emit(0x32);
-            out.emit_u16_le(static_cast<uint16_t>(checked_integer(
-                term.children[0], "random lower bound", 0, 65535)));
-            out.emit_u16_le(static_cast<uint16_t>(checked_integer(
-                term.children[1], "random upper bound", 0, 65535)));
-        } else {
-            out.emit(operator_token(term));
-        }
+    bool emitted_any = false;
+    for (const auto& term : expression.children) {
+        emit_expression_term(out, term, emitted_any);
     }
 
     out.emit(0);
@@ -726,7 +805,18 @@ void emit_params(ByteWriter& out, const std::vector<AstNode>& values,
     for (size_t i = first; i < values.size(); i++) {
         const auto& value = values[i];
 
-        if (value.is_list("gm-string-bytes")) {
+        if (value.is_string()) {
+            out.emit(0x11);
+            for (unsigned char byte : value.str_val) {
+                if (byte < 0x20 || byte > 0x7e) {
+                    throw std::runtime_error(
+                        "gm: string parameters only support printable ASCII; "
+                        "use gm-string-bytes for other data");
+                }
+                out.emit(byte);
+            }
+            out.emit(0);
+        } else if (value.is_list("gm-string-bytes")) {
             out.emit(0x11);
             emit_bytes(out, value, "gm-string-bytes");
             out.emit(0);
@@ -770,8 +860,9 @@ uint32_t require_literal(const AstNode& expression, const std::string& what) {
 
 void emit_address(ByteWriter& out, const AstNode& address,
                   std::vector<SemanticRelocation>& relocations) {
-    if (!address.is_list("gm-address")) {
-        throw std::runtime_error("gm: expected gm-address");
+    bool local = address.is_list("gm-local-address");
+    if (!local && !address.is_list("gm-address")) {
+        throw std::runtime_error("gm: expected gm-address or gm-local-address");
     }
 
     expect_children(address, 1);
@@ -779,7 +870,7 @@ void emit_address(ByteWriter& out, const AstNode& address,
         address.children[0], "control address", 0, 65535));
     size_t field = out.size();
     out.emit_u16_le(target);
-    relocations.push_back({field, target});
+    relocations.push_back({field, target, local});
 }
 
 void emit_menu(ByteWriter& out, const AstNode& node,
@@ -830,19 +921,13 @@ void emit_menu(ByteWriter& out, const AstNode& node,
             out.emit(0);
         } else if (value.is_list("gm-callback")) {
             expect_children(value, 1);
-            uint32_t target = require_literal(value.children[0], "menu callback");
-            size_t width = 0;
-            uint32_t ignored = 0;
-
-            if (!literal_value(value.children[0], ignored, &width) || width != 2 ||
-                target > 65535) {
-                throw std::runtime_error("gm: menu callback must be a 16-bit literal");
+            if (!value.children[0].is_list("gm-local-address")) {
+                throw std::runtime_error(
+                    "gm: menu callback must use gm-local-address");
             }
-
-            size_t expression_start = out.size();
-            emit_expression(out, value.children[0]);
-            relocations.push_back({expression_start + 1,
-                                   static_cast<uint16_t>(target)});
+            out.emit(2);
+            emit_address(out, value.children[0], relocations);
+            out.emit(0);
         } else {
             emit_expression(out, value);
         }
@@ -972,6 +1057,31 @@ void emit_string_copy(ByteWriter& out, const AstNode& node) {
 }
 
 uint8_t opcode_for_tag(const std::string& tag) {
+    auto prefixed_opcode = [&](const std::string& prefix) -> int {
+        if (tag.rfind(prefix, 0) != 0 || tag.size() == prefix.size()) {
+            return -1;
+        }
+
+        int value = 0;
+        for (size_t i = prefix.size(); i < tag.size(); i++) {
+            char ch = tag[i];
+            if (ch < '0' || ch > '9') return -1;
+            value = value * 10 + (ch - '0');
+            if (value > 255) return -1;
+        }
+        return value;
+    };
+
+    int command = prefixed_opcode("cmd:");
+    if (command == 0 || (command >= 0x30 && command <= 0x85)) {
+        return static_cast<uint8_t>(command);
+    }
+
+    int nop = prefixed_opcode("nop:");
+    if (nop == 0x30 || nop == 0x36 || nop == 0x42 || nop == 0x7f) {
+        return static_cast<uint8_t>(nop);
+    }
+
     for (int opcode = 0; opcode <= 0x85; opcode++) {
         const char* name = opcode_name(static_cast<uint8_t>(opcode));
         if (name != nullptr && tag == name) return static_cast<uint8_t>(opcode);
@@ -984,13 +1094,13 @@ uint8_t opcode_for_tag(const std::string& tag) {
 const char* opcode_name(uint8_t opcode) {
     switch (opcode) {
         case 0x00: return "gm-end";
-        case 0x30: return "gm-nop-30";
+        case 0x30: return "nop:48";
         case 0x31: return "gm-for-start";
         case 0x32: return "gm-for-continue";
         case 0x33: return "gm-if";
         case 0x34: return "gm-switch";
         case 0x35: return "gm-case";
-        case 0x36: return "gm-nop-36";
+        case 0x36: return "nop:54";
         case 0x37: return "gm-next";
         case 0x38: return "gm-while-continue";
         case 0x39: return "gm-gosub-if";
@@ -1002,7 +1112,7 @@ const char* opcode_name(uint8_t opcode) {
         case 0x3f: return "gm-call-reset-if";
         case 0x40: return "gm-gosub-if-save";
         case 0x41: return "gm-return";
-        case 0x42: return "gm-nop-42";
+        case 0x42: return "nop:66";
         case 0x43: return "gm-assign";
         case 0x44: return "gm-struct-assign";
         case 0x45: return "gm-string-copy";
@@ -1063,7 +1173,7 @@ const char* opcode_name(uint8_t opcode) {
         case 0x7c: return "gm-hook";
         case 0x7d: return "gm-driver-state";
         case 0x7e: return "gm-progress-merge";
-        case 0x7f: return "gm-nop-7f";
+        case 0x7f: return "nop:127";
         case 0x80: return "gm-beyond-flag-test";
         case 0x81: return "gm-beyond-external-call";
         case 0x82: return "gm-beyond-bank";
@@ -1075,9 +1185,12 @@ const char* opcode_name(uint8_t opcode) {
 }
 
 AstNode decode_instruction(const std::vector<uint8_t>& code, size_t code_base,
-                           const InstructionSpan& instruction) {
+                           const InstructionSpan& instruction,
+                           const std::unordered_set<size_t>& local_fields,
+                           bool resolve, bool decode_strings) {
     try {
-        return Decoder(code, code_base, instruction).decode();
+        return Decoder(code, code_base, instruction, local_fields, resolve,
+                       decode_strings).decode();
     } catch (const std::exception& error) {
         throw std::runtime_error(
             "gm: semantic opcode " + std::to_string(instruction.opcode) +

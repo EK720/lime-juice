@@ -25,9 +25,9 @@
 
 namespace gm {
 
-// General Message is only partially understood. The loader decodes its
-// self-delimiting text opcode and preserves every other byte in (raw ...)
-// nodes, so a decompile/compile cycle remains lossless.
+// Decode a General Message MES file into semantic commands. Retail Be-Yond
+// files are unpacked transparently and retain their compression setting in
+// metadata for recompilation.
 AstNode load_mes(const std::string& path, Config& cfg);
 
 } // namespace gm

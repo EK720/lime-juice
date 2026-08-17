@@ -330,6 +330,10 @@ static void compile_file(const std::string& path, Config& cfg, bool force,
 
         // auto-wrap text to fit text-frame widths
         if (wrap) {
+            if (compile_cfg.engine == EngineType::GM) {
+                throw std::runtime_error(
+                    "--auto-wrap is not supported for GM scripts");
+            }
             auto_wrap_ast(ast);
         }
 

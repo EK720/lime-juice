@@ -17,13 +17,16 @@
 //
 
 #include "compiler.h"
+#include "opener.h"
 #include "semantic.h"
 #include "../../byte_writer.h"
 #include "../../charset.h"
 #include "../../utf8.h"
 
-#include <stdexcept>
+#include <algorithm>
+#include <cctype>
 #include <optional>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -31,30 +34,8 @@ namespace gm {
 
 namespace {
 
-struct SourceSpan {
-    size_t start;
-    size_t end;
-};
-
-struct OutputSpan {
-    size_t start;
-    size_t end;
-    bool semantic;
-};
-
-struct Relocation {
-    size_t field;
-    uint16_t target;
-};
-
-struct Layout {
-    bool present = false;
-    std::vector<SourceSpan> spans;
-    std::vector<Relocation> relocations;
-};
-
-size_t layout_integer(const AstNode& node, const std::string& what,
-                      size_t maximum) {
+size_t ast_integer(const AstNode& node, const std::string& what,
+                   size_t maximum) {
     if (!node.is_integer() || node.int_val < 0 ||
         static_cast<size_t>(node.int_val) > maximum) {
         throw std::runtime_error("gm: " + what + " is out of range");
@@ -63,137 +44,21 @@ size_t layout_integer(const AstNode& node, const std::string& what,
     return static_cast<size_t>(node.int_val);
 }
 
-Layout read_layout(const AstNode& ast) {
-    Layout layout;
-
-    for (const auto& node : ast.children) {
-        if (!node.is_list("gm-layout")) {
-            continue;
-        }
-
-        if (layout.present) {
-            throw std::runtime_error("gm: multiple gm-layout nodes");
-        }
-
-        layout.present = true;
-
-        for (const auto& entry : node.children) {
-            if (entry.is_list("span") && entry.children.size() == 2) {
-                size_t start = layout_integer(entry.children[0], "span start", 0xffff);
-                size_t end = layout_integer(entry.children[1], "span end", 0x10000);
-
-                if (start >= end) {
-                    throw std::runtime_error("gm: layout span must be non-empty");
-                }
-
-                if (!layout.spans.empty() && layout.spans.back().end != start) {
-                    throw std::runtime_error("gm: layout spans must be contiguous");
-                }
-
-                layout.spans.push_back({start, end});
-            } else if (entry.is_list("reloc") && entry.children.size() == 2) {
-                size_t field = layout_integer(entry.children[0], "relocation field", 0xffff);
-                size_t target = layout_integer(entry.children[1], "relocation target", 0xffff);
-                layout.relocations.push_back({field, static_cast<uint16_t>(target)});
-            } else {
-                throw std::runtime_error("gm: malformed gm-layout entry");
-            }
-        }
-    }
-
-    return layout;
-}
-
-size_t remap_position(size_t source, const std::vector<SourceSpan>& old_spans,
-                      const std::vector<OutputSpan>& new_spans) {
-    for (size_t i = 0; i < old_spans.size(); i++) {
-        const auto& old_span = old_spans[i];
-
-        if (source < old_span.start || source >= old_span.end) {
-            continue;
-        }
-
-        size_t offset = source - old_span.start;
-        size_t old_size = old_span.end - old_span.start;
-        size_t new_size = new_spans[i].end - new_spans[i].start;
-
-        if (old_size != new_size && offset != 0) {
-            throw std::runtime_error(
-                "gm: relocation points inside a resized source node");
-        }
-
-        if (offset >= new_size) {
-            throw std::runtime_error("gm: relocation no longer fits its source node");
-        }
-
-        return new_spans[i].start + offset;
-    }
-
-    throw std::runtime_error("gm: relocation is outside the recorded source spans");
-}
-
-void apply_relocations(ByteWriter& out, const Layout& layout,
-                       const std::vector<OutputSpan>& output_spans) {
-    for (const auto& relocation : layout.relocations) {
-        size_t source_index = layout.spans.size();
-
-        for (size_t i = 0; i < layout.spans.size(); i++) {
-            if (relocation.field >= layout.spans[i].start &&
-                relocation.field < layout.spans[i].end) {
-                source_index = i;
-                break;
-            }
-        }
-
-        if (source_index == layout.spans.size()) {
-            throw std::runtime_error(
-                "gm: relocation field is outside the recorded source spans");
-        }
-
-        // Semantic nodes record their fields while emitting and do not depend
-        // on the old byte offset within a potentially resized instruction.
-        if (output_spans[source_index].semantic) {
-            continue;
-        }
-
-        size_t field = remap_position(relocation.field, layout.spans, output_spans);
-        size_t field_end = remap_position(relocation.field + 1,
-                                          layout.spans, output_spans);
-        size_t target = remap_position(relocation.target,
-                                       layout.spans, output_spans);
-
-        if (field_end != field + 1) {
-            throw std::runtime_error("gm: relocated control field is not contiguous");
-        }
-
-        if (target > 0xffff) {
-            throw std::runtime_error("gm: relocated control target exceeds 16 bits");
-        }
-
-        out.write_u16_le_at(field, static_cast<uint16_t>(target));
-    }
-}
-
-size_t remap_target(size_t target, const Layout& layout,
-                    const std::vector<OutputSpan>& output_spans) {
-    if (!layout.present) {
-        return target;
-    }
-
-    for (const auto& span : layout.spans) {
-        if (target >= span.start && target < span.end) {
-            return remap_position(target, layout.spans, output_spans);
-        }
-    }
-
-    return target;
-}
-
 void apply_semantic_relocations(
     ByteWriter& out, const std::vector<SemanticRelocation>& relocations,
-    const Layout& layout, const std::vector<OutputSpan>& output_spans) {
+    const std::unordered_map<uint16_t, size_t>& labels) {
     for (const auto& relocation : relocations) {
-        size_t target = remap_target(relocation.target, layout, output_spans);
+        size_t target = relocation.target;
+
+        if (relocation.local) {
+            auto label = labels.find(relocation.target);
+            if (label == labels.end()) {
+                throw std::runtime_error(
+                    "gm: local address has no matching gm-label: " +
+                    std::to_string(relocation.target));
+            }
+            target = label->second;
+        }
 
         if (target > 0xffff) {
             throw std::runtime_error("gm: relocated semantic target exceeds 16 bits");
@@ -409,9 +274,36 @@ void emit_text(ByteWriter& out, const AstNode& node, const Charset& cs,
     out.emit(0x00);
 }
 
+void emit_text_raw(ByteWriter& out, const AstNode& node) {
+    if (node.children.empty()) {
+        throw std::runtime_error(
+            "gm: expected (gm-text-raw MODE BYTE ...)");
+    }
+
+    int mode = ast_integer(node.children[0], "raw text mode", 255);
+    if (mode != 1 && mode != 2) {
+        throw std::runtime_error("gm: raw text mode must be 1 or 2");
+    }
+
+    out.emit(0x4a);
+    out.emit(static_cast<uint8_t>(mode));
+    for (size_t i = 1; i < node.children.size(); i++) {
+        out.emit(static_cast<uint8_t>(ast_integer(
+            node.children[i], "raw text byte", 255)));
+    }
+    out.emit(0);
+}
+
 } // namespace
 
 std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
+    std::string preset = cfg.preset;
+    std::transform(preset.begin(), preset.end(), preset.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(std::tolower(ch));
+                   });
+    bool beyond_compression = preset == "beyond" || preset == "be-yond";
+
     for (const auto& node : ast.children) {
         if (!node.is_list("meta")) {
             continue;
@@ -421,6 +313,15 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
             if (entry.is_list("charset") && !entry.children.empty() &&
                 entry.children[0].is_string()) {
                 cfg.charset_name = entry.children[0].str_val;
+            } else if (entry.is_list("compression")) {
+                if (entry.children.size() != 1 ||
+                    !entry.children[0].is_quote() ||
+                    entry.children[0].children.size() != 1 ||
+                    !entry.children[0].children[0].is_symbol("beyond")) {
+                    throw std::runtime_error(
+                        "gm: compression must be 'beyond");
+                }
+                beyond_compression = true;
             }
         }
 
@@ -430,22 +331,28 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
     Charset cs;
     cs.load(cfg.charset_name);
     auto dict = read_dict(ast, cs);
-    auto layout = read_layout(ast);
-
     ByteWriter out;
     emit_header(out, dict);
-    std::vector<OutputSpan> output_spans;
     std::vector<SemanticRelocation> semantic_relocations;
-    size_t span_index = 0;
+    std::unordered_map<uint16_t, size_t> labels;
 
     for (const auto& node : ast.children) {
-        if (node.is_list("meta") || node.is_list("dict") ||
-            node.is_list("gm-layout")) {
+        if (node.is_list("meta") || node.is_list("dict")) {
             continue;
         }
 
-        size_t output_start = out.size();
-        bool semantic = false;
+        if (node.is_list("gm-label")) {
+            if (node.children.size() != 1) {
+                throw std::runtime_error("gm: malformed gm-label");
+            }
+            uint16_t label = static_cast<uint16_t>(ast_integer(
+                node.children[0], "label", 0xffff));
+            if (!labels.emplace(label, out.size()).second) {
+                throw std::runtime_error("gm: duplicate gm-label: " +
+                                         std::to_string(label));
+            }
+            continue;
+        }
 
         if (node.is_list("raw")) {
             for (const auto& byte : node.children) {
@@ -457,47 +364,21 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
             }
         } else if (node.is_list("gm-text")) {
             emit_text(out, node, cs, dict);
-            semantic = true;
-        } else if (emit_instruction(out, node, semantic_relocations)) {
-            semantic = true;
-        } else {
+        } else if (node.is_list("gm-text-raw")) {
+            emit_text_raw(out, node);
+        } else if (!emit_instruction(out, node, semantic_relocations)) {
             throw std::runtime_error("gm compiler: unsupported node: " + node.tag);
         }
-
-        size_t output_end = out.size();
-
-        if (layout.present) {
-            if (span_index >= layout.spans.size()) {
-                throw std::runtime_error("gm: more code nodes than layout spans");
-            }
-
-            const auto& source = layout.spans[span_index];
-
-            if (node.is_list("raw") &&
-                output_end - output_start != source.end - source.start) {
-                throw std::runtime_error("gm: raw nodes with layout metadata cannot change length");
-            }
-
-            output_spans.push_back({output_start, output_end, semantic});
-            span_index++;
-        }
-    }
-
-    if (layout.present && span_index != layout.spans.size()) {
-        throw std::runtime_error("gm: fewer code nodes than layout spans");
     }
 
     if (out.size() > 0x10000) {
         throw std::runtime_error("gm: compiled file exceeds the 16-bit address space");
     }
 
-    if (layout.present) {
-        apply_relocations(out, layout, output_spans);
-    }
+    apply_semantic_relocations(out, semantic_relocations, labels);
 
-    apply_semantic_relocations(out, semantic_relocations, layout, output_spans);
-
-    return out.take_data();
+    auto data = out.take_data();
+    return beyond_compression ? pack_beyond(data) : data;
 }
 
 } // namespace gm

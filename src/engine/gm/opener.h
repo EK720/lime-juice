@@ -20,12 +20,22 @@
 
 #include "../engine.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace gm {
 
-MesFile open_mes(const std::string& path);
-MesFile open_mes_bytes(const std::vector<uint8_t>& bytes);
+struct OpenedMes {
+    MesFile mes;
+    bool beyond_packed = false;
+};
+
+bool is_beyond_packed(const std::vector<uint8_t>& bytes);
+std::vector<uint8_t> unpack_beyond(const std::vector<uint8_t>& bytes);
+std::vector<uint8_t> pack_beyond(const std::vector<uint8_t>& bytes);
+
+OpenedMes open_mes(const std::string& path);
+OpenedMes open_mes_bytes(const std::vector<uint8_t>& bytes);
 
 } // namespace gm

@@ -17,9 +17,12 @@
 //
 
 #include "auto_detect.h"
+#include "engine/gm/opener.h"
+#include "engine/gm/walker.h"
 
 #include <algorithm>
 #include <cctype>
+#include <exception>
 #include <string>
 
 static bool valid_sjis_pair(uint8_t lead, uint8_t trail) {
@@ -82,7 +85,8 @@ static size_t gm_text_end(const std::vector<uint8_t>& bytes, size_t start,
     return pos < bytes.size() ? pos + 1 : 0;
 }
 
-static bool has_gm_startup_signature(const std::vector<uint8_t>& bytes, size_t code_start) {
+static bool has_gm_startup_signature(const std::vector<uint8_t>& bytes,
+                                     size_t code_start) {
     // Fermion's entry scenario begins by loading SYSTEM.MLL:
     //   6e 11 "system.mll" 00 00
     if (code_start + 7 >= bytes.size() || bytes[code_start] != 0x6e ||
@@ -113,9 +117,7 @@ static bool has_gm_startup_signature(const std::vector<uint8_t>& bytes, size_t c
 
 static bool looks_like_gm(const std::vector<uint8_t>& bytes, size_t code_start,
                           size_t dict_entries) {
-    if (has_gm_startup_signature(bytes, code_start)) {
-        return true;
-    }
+    bool signature = has_gm_startup_signature(bytes, code_start);
 
     int records = 0;
 
@@ -129,17 +131,21 @@ static bool looks_like_gm(const std::vector<uint8_t>& bytes, size_t code_start,
                 records++;
             }
 
-            if (records >= 2) {
-                return true;
-            }
-
             pos = end;
         } else {
             pos++;
         }
     }
 
-    return false;
+    if (!signature && records < 2) return false;
+
+    try {
+        std::vector<uint8_t> code(bytes.begin() + code_start, bytes.end());
+        auto walk = gm::walk_code(code, code_start);
+        return !walk.instructions.empty();
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 // score a byte sequence for AI5 vs AI1 structural markers.
@@ -222,6 +228,20 @@ EngineType detect_engine(const std::vector<uint8_t>& bytes) {
 
     if (bytes.size() < 2) {
         return EngineType::AI1;
+    }
+
+    // Retail Be-Yond wraps its ordinary GM MES payload in a 0xff-prefixed
+    // token stream. The wrapper plus a complete structural walk is a much
+    // stronger signature than the heuristics used for uncompressed files.
+    if (gm::is_beyond_packed(bytes)) {
+        try {
+            auto opened = gm::open_mes_bytes(bytes);
+            size_t code_base = 2 + opened.mes.dictionary.size() * 2;
+            auto walk = gm::walk_code(opened.mes.code, code_base);
+            if (!walk.instructions.empty()) return EngineType::GM;
+        } catch (const std::exception&) {
+            // Continue with the normal engine checks for malformed 0xff data.
+        }
     }
 
     // check ADV: FF FE (end-of-mes marker), possibly followed by null padding

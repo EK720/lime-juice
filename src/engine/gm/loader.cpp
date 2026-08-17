@@ -23,8 +23,8 @@
 #include "../../charset.h"
 #include "../../utf8.h"
 
-#include <iterator>
 #include <optional>
+#include <unordered_set>
 #include <vector>
 
 namespace gm {
@@ -192,72 +192,57 @@ AstNode make_dict(const std::vector<std::vector<int>>& dict, const Config& cfg,
     return AstNode::make_list("dict", std::move(entries));
 }
 
-void append_span(std::vector<AstNode>& layout, size_t start, size_t end) {
-    layout.push_back(AstNode::make_list("span", {
-        AstNode::make_integer(static_cast<int32_t>(start)),
-        AstNode::make_integer(static_cast<int32_t>(end))
-    }));
-}
-
-void flush_raw(std::vector<AstNode>& nodes, std::vector<AstNode>& raw,
-               std::vector<AstNode>& layout, size_t start, size_t end) {
-    if (!raw.empty()) {
-        nodes.push_back(AstNode::make_list("raw", std::move(raw)));
-        append_span(layout, start, end);
-        raw.clear();
-    }
-}
-
 } // namespace
 
 AstNode load_mes(const std::string& path, Config& cfg) {
     Charset cs;
     cs.load(cfg.charset_name);
-    auto mes = open_mes(path);
+    auto opened = open_mes(path);
+    const auto& mes = opened.mes;
 
     std::vector<AstNode> nodes;
-    nodes.push_back(AstNode::make_list("meta", {
+    std::vector<AstNode> metadata = {
         AstNode::make_list("engine", {
             AstNode::make_quote(AstNode::make_symbol("GM"))
         }),
         AstNode::make_list("charset", {
             AstNode::make_string(cfg.charset_name)
         })
-    }));
+    };
+    if (opened.beyond_packed) {
+        metadata.push_back(AstNode::make_list("compression", {
+            AstNode::make_quote(AstNode::make_symbol("beyond"))
+        }));
+    }
+    nodes.push_back(AstNode::make_list("meta", std::move(metadata)));
     nodes.push_back(make_dict(mes.dictionary, cfg, cs));
 
     size_t code_base = 2 + mes.dictionary.size() * 2;
     auto walk = walk_code(mes.code, code_base);
-    std::vector<AstNode> code_nodes;
-    std::vector<AstNode> layout;
-    std::vector<AstNode> raw;
-    size_t raw_start = 0;
-    size_t raw_end = 0;
+    std::unordered_set<size_t> local_fields;
+    std::unordered_set<size_t> local_targets;
+
+    for (const auto& relocation : walk.relocations) {
+        local_fields.insert(relocation.field);
+        local_targets.insert(relocation.target);
+    }
 
     for (const auto& instruction : walk.instructions) {
         size_t start = instruction.start - code_base;
         size_t end = instruction.end - code_base;
-        auto text = instruction.opcode == 0x4a
+
+        if (local_targets.count(instruction.start) != 0) {
+            nodes.push_back(AstNode::make_list("gm-label", {
+                AstNode::make_integer(static_cast<int32_t>(instruction.start))
+            }));
+        }
+
+        auto text = cfg.decode && instruction.opcode == 0x4a
             ? parse_text(mes.code, start, mes.dictionary, cs)
             : std::nullopt;
 
-        if (!cfg.decode ||
-            (instruction.opcode == 0x4a &&
-             (!text.has_value() || text->end != end))) {
-            if (raw.empty()) {
-                raw_start = instruction.start;
-            }
-
-            for (size_t pos = start; pos < end; pos++) {
-                raw.push_back(AstNode::make_integer(mes.code[pos]));
-            }
-
-            raw_end = instruction.end;
-            continue;
-        }
-
-        flush_raw(code_nodes, raw, layout, raw_start, raw_end);
-        if (text.has_value()) {
+        if (instruction.opcode == 0x4a && text.has_value() &&
+            text->end == end) {
             std::vector<AstNode> children = {
                 AstNode::make_integer(text->mode),
                 AstNode::make_string(text->text)
@@ -276,27 +261,24 @@ AstNode load_mes(const std::string& path, Config& cfg) {
                                                        std::move(source)));
             }
 
-            code_nodes.push_back(AstNode::make_list("gm-text",
-                                                     std::move(children)));
+            nodes.push_back(AstNode::make_list("gm-text",
+                                               std::move(children)));
+        } else if (instruction.opcode == 0x4a) {
+            std::vector<AstNode> children = {
+                AstNode::make_integer(mes.code[start + 1])
+            };
+            for (size_t pos = start + 2; pos + 1 < end; pos++) {
+                children.push_back(AstNode::make_integer(mes.code[pos]));
+            }
+            nodes.push_back(AstNode::make_list("gm-text-raw",
+                                               std::move(children)));
         } else {
-            code_nodes.push_back(decode_instruction(mes.code, code_base,
-                                                    instruction));
+            nodes.push_back(decode_instruction(mes.code, code_base,
+                                               instruction, local_fields,
+                                               cfg.resolve, cfg.decode));
         }
-        append_span(layout, instruction.start, instruction.end);
     }
 
-    flush_raw(code_nodes, raw, layout, raw_start, raw_end);
-
-    for (const auto& relocation : walk.relocations) {
-        layout.push_back(AstNode::make_list("reloc", {
-            AstNode::make_integer(static_cast<int32_t>(relocation.field)),
-            AstNode::make_integer(relocation.target)
-        }));
-    }
-
-    nodes.push_back(AstNode::make_list("gm-layout", std::move(layout)));
-    nodes.insert(nodes.end(), std::make_move_iterator(code_nodes.begin()),
-                 std::make_move_iterator(code_nodes.end()));
     return AstNode::make_list("mes", std::move(nodes));
 }
 
