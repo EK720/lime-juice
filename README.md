@@ -189,13 +189,14 @@ When compiling, juice reads settings from the `(meta ...)` block at the top of t
 (meta (engine 'AI5) (charset "pc98") (extraop #t))
 ```
 
-General Message scripts use `(engine 'GM)`. Support is corpus-validated against
-the system-1 Rev.95:06:30 interpreters in *Fermion: Mirai kara no Houmonsha*
-and *Be-Yond: Kurodaishou ni Mirareteru*. Juice reads and writes Be-Yond's
-retail `0xff`-packed MES files directly. Commands, expressions, references,
-parameters, and text use the same concise source conventions as the older
-engines. Common calls and loops are structured; explicit `label` and
-`local-address` nodes preserve irreducible shared control flow across edits.
+General Message scripts use `(engine 'GM)`. Retail corpus coverage spans both
+system-1 Rev.95:06:30 games, *Fermion: Mirai kara no Houmonsha* and *Be-Yond:
+Kurodaishou ni Mirareteru*; layouts absent from those scripts are derived from
+their native handlers. Juice reads and writes Be-Yond's retail `0xff`-packed MES
+files directly. Commands, expressions, references, parameters, and text use the
+same concise source conventions as the older engines. Common calls and loops
+are structured; explicit `label` and `local-address` nodes preserve irreducible
+shared control flow across edits.
 See the
 [GM scripting reference](doc/scripting-gm.md).
 

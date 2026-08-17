@@ -108,13 +108,14 @@ sed 's/(text "あい\\nう"/(text "あい\\nうあ"/' \
 printf '%b' '\x06\x00\x82\xa0\x82\xa2\x6e\x11system.mll\x00\x00\x40\x28\x00\x12\x79\x00\x4a\x01\x18\x19\x04\x82\xa4\x18\x00\x4a\x02BS\x00\x00' > "$TMP/expected-mode1.mes"
 cmp "$TMP/expected-mode1.mes" "$TMP/mode1-edited.mes"
 
-# The game preset selects GM without relying on auto-detection.
+# Game presets select GM without relying on auto-detection. Compilation follows
+# source metadata, so choosing the Be-Yond preset does not pack Fermion source.
 "$JUICE" -d -f -p fermion -o "$TMP/preset.rkt" "$TMP/input.mes"
 grep -q "(engine 'GM)" "$TMP/preset.rkt"
 "$JUICE" -d -f -p beyond -o "$TMP/beyond-preset.rkt" "$TMP/input.mes"
 grep -q "(engine 'GM)" "$TMP/beyond-preset.rkt"
 "$JUICE" -c -f -p beyond -o "$TMP/beyond-preset.mes" "$TMP/output.rkt"
-test "$(od -An -tu1 -N1 "$TMP/beyond-preset.mes" | tr -d ' ')" = 255
+cmp "$TMP/input.mes" "$TMP/beyond-preset.mes"
 
 sed 's/(text #:mode 2 "BS")/(text #:mode 2 "BIGGER")/' \
     "$TMP/output.rkt" > "$TMP/edited.rkt"
@@ -190,6 +191,9 @@ sed "s/(charset \"pc98\")/(charset \"pc98\") (compression 'beyond)/" \
     "$TMP/output.rkt" > "$TMP/packed-source.rkt"
 "$JUICE" -c -f -o "$TMP/packed.mes" "$TMP/packed-source.rkt"
 test "$(od -An -tu1 -N1 "$TMP/packed.mes" | tr -d ' ')" = 255
+"$JUICE" -c -f -p fermion -o "$TMP/packed-with-preset.mes" \
+    "$TMP/packed-source.rkt"
+cmp "$TMP/packed.mes" "$TMP/packed-with-preset.mes"
 "$JUICE" -d -f --auto-engine -o "$TMP/packed.rkt" "$TMP/packed.mes"
 grep -q "(compression 'beyond)" "$TMP/packed.rkt"
 cmp "$TMP/packed-source.rkt" "$TMP/packed.rkt"

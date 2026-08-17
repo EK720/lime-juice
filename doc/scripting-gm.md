@@ -24,7 +24,9 @@ juice -c SCENE.rkt
 
 A decompiled Be-Yond script carries `(compression 'beyond)` in its metadata,
 so the ordinary compile command writes another game-ready packed file. The
-`beyond` preset also enables compression for hand-written source.
+metadata entry is the explicit packing switch for both decompiled and
+hand-written source; choosing a preset does not change the source's packing
+mode.
 
 ## File structure
 
@@ -74,11 +76,16 @@ targets use labels, so their encoded addresses are recalculated after an edit.
 
 ## Commands and unresolved form
 
-Known opcodes use semantic names such as `if-frame`, `assign`, `text-color`,
+Dispatcher opcodes use descriptive names such as `if-frame`, `assign`, `text-color`,
 `mouse-command`, and `save-slot`. As with the other engines, the `(engine 'GM)`
 metadata scopes those names, so they do not carry an engine prefix. The
 encodable fixture `tests/fixtures/gm-semantic.rkt` is the compact reference for
 every supported opcode and operand shape.
+
+All dispatcher slots have named nodes and typed encodings. Common `call` and
+`while` conventions are lifted into structured forms; selector-driven I/O such
+as `mouse-command`, `video-command`, and `music-command` remains represented as
+typed selector and parameter lists.
 
 `--no-resolve` keeps typed operands but writes numeric command names:
 
@@ -272,6 +279,9 @@ tests/test_gm_corpus.sh /path/to/mes/files build/juice
 The corpus test requires semantic output without raw instruction fallback. It
 checks byte-exact output for unpacked files, deterministic canonical output for
 packed files, and recompiles every file after growing all mode-1 text records.
+The two retail corpora exercise 60 of the 80 base-table opcodes. Layouts for the
+remaining base slots are derived from their native handlers but are unexercised
+in retail scripts.
 
 GM uses 16-bit file addresses, so an unpacked compiled file cannot exceed
 65,536 bytes. Be-Yond's 16-bit unpacked-size field further limits packed output

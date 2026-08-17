@@ -24,8 +24,6 @@
 #include "../../charset.h"
 #include "../../utf8.h"
 
-#include <algorithm>
-#include <cctype>
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
@@ -236,12 +234,7 @@ void emit_text_raw(ByteWriter& out, const AstNode& node) {
 } // namespace
 
 std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
-    std::string preset = cfg.preset;
-    std::transform(preset.begin(), preset.end(), preset.begin(),
-                   [](unsigned char ch) {
-                       return static_cast<char>(std::tolower(ch));
-                   });
-    bool beyond_compression = preset == "beyond" || preset == "be-yond";
+    bool beyond_compression = false;
 
     for (const auto& node : ast.children) {
         if (!node.is_list("meta")) {
