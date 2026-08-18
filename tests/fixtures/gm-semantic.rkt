@@ -12,39 +12,27 @@
  (next (+ (ref 12 16) 1))
  (while-continue)
  (gosub-if (local-address 2) (local-address 2) default)
- (menu 1
-  1
-  0
-  1
-  2
-  3
-  4
-  (callback (local-address 2))
-  6)
+ (menu 1 1 0 1 2 3 4 (callback (local-address 2)) 6)
  (menu 1 0 default)
  (menu 2 (ref 12 32))
  (menu 3 (ref 12 34))
- (menu 4
-  default default default default default
-  default default default default)
- (menu 5
-  default default default
-  (ref 12 36) (ref 13 38))
+ (menu 4 default default default default default default default default
+  default)
+ (menu 5 default default default (ref 12 36) (ref 13 38))
  (menu 6 (ref 12 40))
  (menu 7 default)
  (menu 8 default)
  (menu 9 default)
- (menu 10
-  0
-  (ref 12 42) (ref 12 44) (ref 12 46) (ref 12 48)
-  (ref 12 50) (ref 12 52) (ref 12 54))
- (menu 10
-  1
-  (ref 12 56) (ref 12 58) (ref 12 60)
-  (ref 12 62) (ref 12 64) (ref 12 66))
+ (menu 10 0 (ref 12 42) (ref 12 44) (ref 12 46) (ref 12 48) (ref 12 50)
+  (ref 12 52) (ref 12 54))
+ (menu 10 1 (ref 12 56) (ref 12 58) (ref 12 60) (ref 12 62) (ref 12 64)
+  (ref 12 66))
+ (menu 10 (ref 12 68) (ref 12 70) (ref 12 72) (ref 12 74) (ref 12 76)
+  (ref 12 78) (ref 12 80))
  (menu 11)
  (menu 12)
  (eval (random 1 10))
+ (eval (ref 5 900 (+ 1 2)))
  (eval (* 6 2))
  (eval (/ 6 2))
  (eval (% 6 2))
@@ -67,19 +55,14 @@
  (gosub-if-save (local-address 2) (address 22136) default)
  (return)
  (nop:66)
- (assign
-  (ref 12 100)
-  (value -1 (strides 1 4))
-  (string-value (ref 14 200))
-  (range (ref 12 300)))
+ (assign (ref 12 100) (value -1 (strides 1 4))
+         (string-value (ref 14 200))
+         (range (ref 12 300)))
  (struct-assign (ref 12 400) 4660 (ref-source (ref 15 402)))
  (struct-assign (ref 12 404) (inline 10 20 30 40))
  (string-copy (ref 14 500) (ref-source 255 (ref 12 502)))
  (string-copy (ref 14 504) (inline-source 0 65))
- (text-window
-  1
-  "AB"
-  (ref-param (ref 15 600)))
+ (text-window 1 "AB" (ref-param (ref 15 600)))
  (text-origin)
  (text-window-stack 255)
  (text-attribute 3)
@@ -113,9 +96,8 @@
  (store-values (ref 12 702) (ref 13 704))
  (wait-key)
  (delay)
- (store-six-values
-  (ref 12 706) (ref 12 708) (ref 12 710)
-  (ref 12 712) (ref 12 714) (ref 12 716))
+ (store-six-values (ref 12 706) (ref 12 708) (ref 12 710) (ref 12 712)
+  (ref 12 714) (ref 12 716))
  (tick-snapshot)
  (tick-delta (ref 12 718))
  (mouse-command 0)

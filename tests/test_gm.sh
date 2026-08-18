@@ -175,6 +175,33 @@ grep -q '(wait-key)' "$TMP/while.rkt"
 "$JUICE" -c -f -o "$TMP/while-output.mes" "$TMP/while.rkt"
 cmp "$TMP/while.mes" "$TMP/while-output.mes"
 
+# Fusion must account for uses outside a nested while body. The call's
+# continuation label is also targeted after the loop, so it must survive the
+# recursive call fusion and remain compilable.
+awk 'BEGIN {
+    print "(mes"
+    print " (meta (engine '\''GM) (charset \"pc98\"))"
+    print " (dict)"
+    print " (if-frame 1 (local-address 30))"
+    print " (gosub-if-save (local-address 20) (address 4660) default)"
+    print " (end)"
+    print " (label 20)"
+    print " (wait-key)"
+    print " (while-continue)"
+    print " (label 30)"
+    print " (if-frame 1 (local-address 20))"
+    print " (end))"
+}' > "$TMP/shared-label.rkt"
+"$JUICE" -c -f -o "$TMP/shared-label.mes" "$TMP/shared-label.rkt"
+"$JUICE" -d -f -e GM -o "$TMP/shared-label-output.rkt" \
+    "$TMP/shared-label.mes"
+grep -q '(while 1' "$TMP/shared-label-output.rkt"
+grep -q '(call (address 4660))' "$TMP/shared-label-output.rkt"
+grep -q '(label 15)' "$TMP/shared-label-output.rkt"
+"$JUICE" -c -f -o "$TMP/shared-label-output.mes" \
+    "$TMP/shared-label-output.rkt"
+cmp "$TMP/shared-label.mes" "$TMP/shared-label-output.mes"
+
 # Undecodable SJIS/gaiji pairs remain local escapes inside otherwise editable
 # text instead of forcing the complete record into text-raw.
 printf '%b' '\x04\x00\xeb\xa0\x4a\x01\x18\x82\xa0\x00\x00' \
@@ -215,6 +242,18 @@ printf '%b' '\xff\x0c\x00\x04\x00\x02\x00\x01\x00\x40\x02\x01\x00\x0a' \
     > "$TMP/expected-packed-vector.mes"
 cmp "$TMP/expected-packed-vector.mes" "$TMP/packed-vector.mes"
 
+# Be-Yond matches snapshot the ring source before writing their output. This
+# retail-compatible overlap emits AB plus two stale zeroes; a byte-at-a-time
+# LZSS decoder would incorrectly repeat AB instead.
+printf '%b' '\xff\x09\x00\x08\x00\x06\x00\x01\x00\x04\x02\x00\x3c\x41\x42\x03\x00\x03' \
+    > "$TMP/packed-overlap.mes"
+"$JUICE" -d -f -e GM -o "$TMP/packed-overlap.rkt" \
+    "$TMP/packed-overlap.mes"
+grep -q '(skip-5 (bytes 65 66 65 66 0))' "$TMP/packed-overlap.rkt"
+"$JUICE" -c -f -o "$TMP/packed-overlap-output.mes" \
+    "$TMP/packed-overlap.rkt"
+cmp "$TMP/packed-overlap.mes" "$TMP/packed-overlap-output.mes"
+
 "$JUICE" -c -f --auto-wrap -o "$TMP/wrapped.mes" "$TMP/output.rkt" \
     > "$TMP/wrapped.log" 2>&1 || true
 test ! -e "$TMP/wrapped.mes"
@@ -229,6 +268,8 @@ grep -q -- '--auto-wrap is not supported for GM scripts' "$TMP/wrapped.log"
 grep -q '(for-end ' "$TMP/semantic.rkt"
 grep -q '(push-reference ' "$TMP/semantic.rkt"
 grep -q '(pop-reference ' "$TMP/semantic.rkt"
+grep -q '(menu 10 (ref 12 68)' "$TMP/semantic.rkt"
+grep -q '(eval (ref 5 900 (+ 1 2)))' "$TMP/semantic.rkt"
 "$JUICE" -c -f -o "$TMP/semantic-roundtrip.mes" "$TMP/semantic.rkt"
 cmp "$TMP/semantic.mes" "$TMP/semantic-roundtrip.mes"
 
@@ -241,6 +282,64 @@ printf '%s\n' \
     > "$TMP/raw.log" 2>&1 || true
 test ! -e "$TMP/raw.mes"
 grep -q 'unsupported node: raw' "$TMP/raw.log"
+
+# Inline struct payload ends are validated boundaries, not control-flow
+# relocations. They must not leak unreferenced labels into decompiled source.
+printf '%s\n' \
+    "(mes (meta (engine 'GM) (charset \"pc98\")) (dict)" \
+    " (struct-assign (ref 12 1) (inline 1 2 3))" \
+    " (end))" > "$TMP/inline-struct.rkt"
+"$JUICE" -c -f -o "$TMP/inline-struct.mes" "$TMP/inline-struct.rkt"
+"$JUICE" -d -f -e GM -o "$TMP/inline-struct-output.rkt" \
+    "$TMP/inline-struct.mes"
+grep -q '(struct-assign (ref 12 1) (inline 1 2 3))' \
+    "$TMP/inline-struct-output.rkt"
+! grep -q '(label ' "$TMP/inline-struct-output.rkt"
+"$JUICE" -c -f -o "$TMP/inline-struct-output.mes" \
+    "$TMP/inline-struct-output.rkt"
+cmp "$TMP/inline-struct.mes" "$TMP/inline-struct-output.mes"
+
+# Reject hand-written operand shapes that would decode differently, and run
+# the finished byte stream through the walker so EOF control targets cannot be
+# emitted by the compiler.
+printf '%s\n' \
+    "(mes (meta (engine 'GM) (charset \"pc98\")) (dict)" \
+    " (mll-load (string-bytes 65 0 66)) (end))" \
+    > "$TMP/zero-string-byte.rkt"
+"$JUICE" -c -f -o "$TMP/zero-string-byte.mes" \
+    "$TMP/zero-string-byte.rkt" > "$TMP/zero-string-byte.log" 2>&1 || true
+test ! -e "$TMP/zero-string-byte.mes"
+grep -q 'invalid string-bytes byte' "$TMP/zero-string-byte.log"
+
+printf '%s\n' \
+    "(mes (meta (engine 'GM) (charset \"pc98\")) (dict)" \
+    " (string-copy (ref 14 1) (inline-source 0 65 5)) (end))" \
+    > "$TMP/ambiguous-inline-string.rkt"
+"$JUICE" -c -f -o "$TMP/ambiguous-inline-string.mes" \
+    "$TMP/ambiguous-inline-string.rkt" \
+    > "$TMP/ambiguous-inline-string.log" 2>&1 || true
+test ! -e "$TMP/ambiguous-inline-string.mes"
+grep -q 'inline string source would decode as a reference source' \
+    "$TMP/ambiguous-inline-string.log"
+
+printf '%s\n' \
+    "(mes (meta (engine 'GM) (charset \"pc98\")) (dict)" \
+    " (call (address 4660)))" > "$TMP/trailing-call.rkt"
+"$JUICE" -c -f -o "$TMP/trailing-call.mes" "$TMP/trailing-call.rkt" \
+    > "$TMP/trailing-call.log" 2>&1 || true
+test ! -e "$TMP/trailing-call.mes"
+grep -q 'control target is outside the MES code' "$TMP/trailing-call.log"
+
+printf '%s\n' \
+    "(mes (meta (engine 'GM) (charset \"pc98\")) (dict)" \
+    " (struct-assign (ref 12 1) (inline 1 2 3)))" \
+    > "$TMP/trailing-inline-struct.rkt"
+"$JUICE" -c -f -o "$TMP/trailing-inline-struct.mes" \
+    "$TMP/trailing-inline-struct.rkt" \
+    > "$TMP/trailing-inline-struct.log" 2>&1 || true
+test ! -e "$TMP/trailing-inline-struct.mes"
+grep -q 'control target is outside the MES code' \
+    "$TMP/trailing-inline-struct.log"
 
 # GM files cannot exceed the engine's 16-bit file-address space. Build the
 # oversized program entirely from valid semantic instructions.

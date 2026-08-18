@@ -163,14 +163,9 @@ void lower_node(const AstNode& node, std::vector<AstNode>& result,
     result.push_back(AstNode::make_list("label", {AstNode::make_integer(exit)}));
 }
 
-} // namespace
-
-std::vector<AstNode> fuse_syntax(std::vector<AstNode> nodes) {
-    std::unordered_map<int32_t, size_t> local_uses;
-    for (const auto& node : nodes) {
-        count_local_addresses(node, local_uses);
-    }
-
+std::vector<AstNode> fuse_syntax_with_uses(
+    std::vector<AstNode> nodes,
+    const std::unordered_map<int32_t, size_t>& local_uses) {
     std::vector<AstNode> result;
     result.reserve(nodes.size());
 
@@ -185,7 +180,7 @@ std::vector<AstNode> fuse_syntax(std::vector<AstNode> nodes) {
             }
             result.push_back(AstNode::make_list("call", std::move(children)));
 
-            if (local_uses[continuation] > 1) {
+            if (local_uses.at(continuation) > 1) {
                 result.push_back(std::move(nodes[i + 2]));
             }
             i += 3;
@@ -199,7 +194,7 @@ std::vector<AstNode> fuse_syntax(std::vector<AstNode> nodes) {
             for (size_t j = i + 1; j + 1 < label_index; j++) {
                 body.push_back(std::move(nodes[j]));
             }
-            body = fuse_syntax(std::move(body));
+            body = fuse_syntax_with_uses(std::move(body), local_uses);
 
             std::vector<AstNode> children;
             children.push_back(std::move(nodes[i].children[0]));
@@ -215,6 +210,17 @@ std::vector<AstNode> fuse_syntax(std::vector<AstNode> nodes) {
     }
 
     return result;
+}
+
+} // namespace
+
+std::vector<AstNode> fuse_syntax(std::vector<AstNode> nodes) {
+    std::unordered_map<int32_t, size_t> local_uses;
+    for (const auto& node : nodes) {
+        count_local_addresses(node, local_uses);
+    }
+
+    return fuse_syntax_with_uses(std::move(nodes), local_uses);
 }
 
 std::vector<AstNode> lower_syntax(const std::vector<AstNode>& nodes) {

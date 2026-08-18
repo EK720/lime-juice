@@ -831,7 +831,10 @@ void emit_params(ByteWriter& out, const std::vector<AstNode>& values,
             out.emit(0);
         } else if (value.is_list("string-bytes")) {
             out.emit(0x11);
-            emit_bytes(out, value, "string-bytes");
+            for (const auto& byte : value.children) {
+                out.emit(static_cast<uint8_t>(checked_integer(
+                    byte, "string-bytes byte", 1, 255)));
+            }
             out.emit(0);
         } else if (value.is_list("ref-param")) {
             expect_children(value, 1);
@@ -1079,13 +1082,26 @@ void emit_string_copy(ByteWriter& out, const AstNode& node) {
         emit_reference(out, source.children[1]);
         out.emit(0);
     } else if (source.is_list("inline-source") && !source.children.empty()) {
+        uint8_t trailing = static_cast<uint8_t>(checked_integer(
+            source.children[0], "string trailing byte", 0, 255));
+        std::vector<uint8_t> payload;
+        payload.reserve(source.children.size() - 1);
         for (size_t i = 1; i < source.children.size(); i++) {
-            out.emit(static_cast<uint8_t>(checked_integer(source.children[i],
-                                                      "inline string byte", 0, 255)));
+            payload.push_back(static_cast<uint8_t>(checked_integer(
+                source.children[i], "inline string byte", 1, 255)));
         }
+
+        uint8_t discriminator = payload.size() >= 2
+            ? payload[1]
+            : payload.empty() ? trailing : 0;
+        if (discriminator >= 5) {
+            throw std::runtime_error(
+                "gm: inline string source would decode as a reference source");
+        }
+
+        for (uint8_t byte : payload) out.emit(byte);
         out.emit(0);
-        out.emit(static_cast<uint8_t>(checked_integer(source.children[0],
-                                                      "string trailing byte", 0, 255)));
+        out.emit(trailing);
     } else {
         throw std::runtime_error("gm: malformed string source");
     }

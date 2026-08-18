@@ -131,6 +131,9 @@ std::vector<uint8_t> unpack_beyond(const std::vector<uint8_t>& bytes) {
                 throw std::runtime_error("Be-Yond match exceeds unpacked size");
             }
 
+            // SL.EXE snapshots the complete match before advancing the ring.
+            // Retail streams rely on overlaps whose stale bytes would differ
+            // under conventional byte-at-a-time LZSS copying.
             std::array<uint8_t, kBeyondMaxMatch> chunk{};
             for (size_t i = 0; i < length; i++) {
                 chunk[i] = ring[(source + i) & (kBeyondRingSize - 1)];
@@ -186,6 +189,9 @@ std::vector<uint8_t> pack_beyond(const std::vector<uint8_t>& bytes) {
         size_t best_length = 0;
         uint16_t best_position = 0;
 
+        // Compare against the current ring snapshot, including across the
+        // write cursor. The decoder snapshots matches the same way, so these
+        // overlaps are game-compatible and improve compression.
         for (uint16_t position : positions_by_byte[bytes[input_offset]]) {
             size_t length = 1;
             while (length < limit &&

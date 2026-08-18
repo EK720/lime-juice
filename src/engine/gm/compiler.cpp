@@ -20,6 +20,7 @@
 #include "opener.h"
 #include "semantic.h"
 #include "syntax.h"
+#include "walker.h"
 #include "../../byte_writer.h"
 #include "../../charset.h"
 #include "../../utf8.h"
@@ -265,6 +266,7 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
     auto dict = read_dict(ast, cs);
     ByteWriter out;
     emit_header(out, dict);
+    size_t code_base = out.size();
     std::vector<SemanticRelocation> semantic_relocations;
     std::unordered_map<uint16_t, size_t> labels;
     auto lowered = lower_syntax(ast.children);
@@ -303,6 +305,8 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
     apply_semantic_relocations(out, semantic_relocations, labels);
 
     auto data = out.take_data();
+    std::vector<uint8_t> code(data.begin() + code_base, data.end());
+    (void)walk_code(code, code_base);
     return beyond_compression ? pack_beyond(data) : data;
 }
 

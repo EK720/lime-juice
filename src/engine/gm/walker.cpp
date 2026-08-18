@@ -41,6 +41,7 @@ struct PendingRelocation {
     size_t field;
     uint16_t target;
     bool required_local;
+    bool control_flow = true;
 };
 
 struct ParsedInstruction {
@@ -100,7 +101,7 @@ public:
                 fail(relocation.field, "control target is not an instruction boundary");
             }
 
-            if (local) {
+            if (local && relocation.control_flow) {
                 result.relocations.push_back({relocation.field, relocation.target});
             }
         }
@@ -465,7 +466,10 @@ private:
                 pos = read_reference(pos);
                 pos = expect_zero(pos, "after opcode 0x44 reference");
             } else {
-                relocations.push_back({field, target, true});
+                // The word only delimits the inline payload. Validate it as
+                // an instruction boundary, but do not present it as a control
+                // relocation or synthesize an unreferenced label for it.
+                relocations.push_back({field, target, true, false});
 
                 if (target <= pos || target > end_) {
                     fail(field, "invalid opcode 0x44 skip target");

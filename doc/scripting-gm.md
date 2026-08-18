@@ -16,6 +16,11 @@ juice -d -p fermion SCENE.MES
 juice -d -p beyond SCENE.MES
 ```
 
+For small or hand-written unpacked files without the usual `SYSTEM.MLL`
+startup command or at least two non-empty text records, select GM explicitly
+with `-e GM` or a game preset. Auto-detection stays conservative so that such
+signature-less files are not mistaken for unrelated AI1/AI5 bytecode.
+
 Edit the generated `SCENE.rkt`, then compile it:
 
 ```sh
