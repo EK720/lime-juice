@@ -28,6 +28,7 @@
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace gm {
@@ -306,7 +307,13 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
 
     auto data = out.take_data();
     std::vector<uint8_t> code(data.begin() + code_base, data.end());
-    (void)walk_code(code, code_base);
+    std::unordered_set<size_t> known_external_fields;
+    for (const auto& relocation : semantic_relocations) {
+        if (!relocation.local) {
+            known_external_fields.insert(relocation.field);
+        }
+    }
+    (void)walk_code(code, code_base, known_external_fields);
     return beyond_compression ? pack_beyond(data) : data;
 }
 

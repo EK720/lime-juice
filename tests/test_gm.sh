@@ -86,6 +86,21 @@ grep -q '(text #:mode 2 "BS")' "$TMP/output.rkt"
 "$JUICE" -c -f -o "$TMP/output.mes" "$TMP/output.rkt"
 cmp "$TMP/input.mes" "$TMP/output.mes"
 
+# A grown script may cross a fixed MLL address. The compiler still knows from
+# `(address ...)` that this operand is external, so its validation must not
+# reinterpret the numeric value as a local target inside the larger file.
+{
+    printf '%s\n' \
+        "(mes (meta (engine 'GM) (charset \"pc98\")) (dict)" \
+        " (call (address 31010))" \
+        ' (text #:mode 2 "'
+    awk 'BEGIN { for (i = 0; i < 31010; i++) printf "A" }'
+    printf '%s\n' '") (end))'
+} > "$TMP/crossed-external-address.rkt"
+"$JUICE" -c -f -o "$TMP/crossed-external-address.mes" \
+    "$TMP/crossed-external-address.rkt"
+test -s "$TMP/crossed-external-address.mes"
+
 # Labels make structural edits relocatable too: insert a new node before the
 # continuation without maintaining a parallel span table.
 awk '/\(label 39\)/ { print " (text #:mode 2 \"X\")" } { print }' \

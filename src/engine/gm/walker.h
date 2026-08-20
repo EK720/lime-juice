@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <unordered_set>
 #include <vector>
 
 namespace gm {
@@ -42,6 +43,8 @@ struct WalkResult {
 
 // Decode the complete GM instruction stream. All returned positions are
 // absolute MES file offsets, including the dictionary/header prefix.
-WalkResult walk_code(const std::vector<uint8_t>& code, size_t code_base);
+WalkResult walk_code(
+    const std::vector<uint8_t>& code, size_t code_base,
+    const std::unordered_set<size_t>& known_external_fields = {});
 
 } // namespace gm

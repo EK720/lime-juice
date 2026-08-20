@@ -51,8 +51,10 @@ struct ParsedInstruction {
 
 class Walker {
 public:
-    Walker(const std::vector<uint8_t>& code, size_t code_base)
-        : code_(code), base_(code_base), end_(code_base + code.size()) {
+    Walker(const std::vector<uint8_t>& code, size_t code_base,
+           const std::unordered_set<size_t>& known_external_fields)
+        : code_(code), base_(code_base), end_(code_base + code.size()),
+          known_external_fields_(known_external_fields) {
         if (end_ < base_) {
             throw std::runtime_error("gm: code range overflow");
         }
@@ -91,7 +93,8 @@ public:
         }
 
         for (const auto& relocation : pending) {
-            bool local = relocation.target >= base_ && relocation.target < end_;
+            bool local = known_external_fields_.count(relocation.field) == 0 &&
+                         relocation.target >= base_ && relocation.target < end_;
 
             if (relocation.required_local && !local) {
                 fail(relocation.field, "control target is outside the MES code");
@@ -576,12 +579,15 @@ private:
     const std::vector<uint8_t>& code_;
     size_t base_;
     size_t end_;
+    const std::unordered_set<size_t>& known_external_fields_;
 };
 
 } // namespace
 
-WalkResult walk_code(const std::vector<uint8_t>& code, size_t code_base) {
-    return Walker(code, code_base).walk();
+WalkResult walk_code(
+    const std::vector<uint8_t>& code, size_t code_base,
+    const std::unordered_set<size_t>& known_external_fields) {
+    return Walker(code, code_base, known_external_fields).walk();
 }
 
 } // namespace gm
