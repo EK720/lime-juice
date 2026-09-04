@@ -228,8 +228,11 @@ void emit_text_raw(ByteWriter& out, const AstNode& node) {
     out.emit(0x4a);
     out.emit(static_cast<uint8_t>(mode));
     for (size_t i = 1; i < node.children.size(); i++) {
-        out.emit(static_cast<uint8_t>(ast_integer(
-            node.children[i], "raw text byte", 255)));
+        auto byte = ast_integer(node.children[i], "raw text byte", 255);
+        if (byte == 0) {
+            throw std::runtime_error("gm: raw text payload must not contain a zero terminator");
+        }
+        out.emit(static_cast<uint8_t>(byte));
     }
     out.emit(0);
 }

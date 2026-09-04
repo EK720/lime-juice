@@ -431,6 +431,30 @@ test ! -e "$TMP/trailing-inline-struct.mes"
 grep -q 'control target is outside the MES code' \
     "$TMP/trailing-inline-struct.log"
 
+# Embedded text terminators must not turn the remaining payload into commands.
+for mode in 1 2; do
+    for payload in '0 80 66' '65 0 80 66' '65 0'; do
+        printf '%s\n' \
+            "(mes (meta (engine 'GM) (charset \"pc98\")) (dict)" \
+            " (text-raw $mode $payload) (end))" > "$TMP/zero-text.rkt"
+        "$JUICE" -c -f -o "$TMP/zero-text.mes" "$TMP/zero-text.rkt" \
+            > "$TMP/zero-text.log" 2>&1 || true
+        test ! -e "$TMP/zero-text.mes"
+        grep -q 'raw text payload must not contain a zero terminator' "$TMP/zero-text.log"
+    done
+    # Empty records and opaque nonzero bytes remain byte-exact under no-decode.
+    printf '%s\n' \
+        "(mes (meta (engine 'GM) (charset \"pc98\")) (dict)" \
+        " (text-raw $mode) (text-raw $mode 4 255 80 66) (end))" \
+        > "$TMP/raw-text-$mode.rkt"
+    "$JUICE" -c -f -o "$TMP/raw-text-$mode.mes" "$TMP/raw-text-$mode.rkt"
+    "$JUICE" -d -f -e GM --no-decode -o "$TMP/raw-text-$mode-output.rkt" \
+        "$TMP/raw-text-$mode.mes"
+    grep -q "(text-raw $mode 4 255 80 66)" "$TMP/raw-text-$mode-output.rkt"
+    "$JUICE" -c -f -o "$TMP/raw-text-$mode-output.mes" "$TMP/raw-text-$mode-output.rkt"
+    cmp "$TMP/raw-text-$mode.mes" "$TMP/raw-text-$mode-output.mes"
+done
+
 # GM files cannot exceed the engine's 16-bit file-address space. Build the
 # oversized program entirely from valid semantic instructions.
 awk 'BEGIN {

@@ -186,6 +186,9 @@ selected charset, Juice emits the exact payload:
 (text-raw 1 24 25 4 130 164)
 ```
 
+`text-raw` payload bytes must be nonzero; Juice appends the terminating zero.
+An empty payload is allowed.
+
 `--no-decode` affects dictionary entries, text, and byte-string parameters. It
 does not turn semantic commands into `(raw ...)` blocks.
 
