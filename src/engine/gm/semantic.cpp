@@ -1054,6 +1054,14 @@ void emit_struct_assignment(ByteWriter& out, const AstNode& node) {
     }
 
     if (node.children.size() == 2 && node.children[1].is_list("inline")) {
+        const auto& payload = node.children[1].children;
+        if (payload.empty()) {
+            throw std::runtime_error("gm: inline struct payload must not be empty");
+        }
+        if (checked_integer(payload.front(), "inline byte", 0, 255) == 0x0f) {
+            throw std::runtime_error(
+                "gm: inline struct payload would decode as a reference source");
+        }
         emit_reference(out, node.children[0]);
         size_t field = out.size();
         out.emit_u16_le(0);

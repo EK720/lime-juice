@@ -359,6 +359,36 @@ grep -q '(struct-assign (ref 12 1) (inline 1 2 3))' \
     "$TMP/inline-struct-output.rkt"
 cmp "$TMP/inline-struct.mes" "$TMP/inline-struct-output.mes"
 
+# 0x0f selects the reference-source layout even when the bytes also form a
+# complete inline payload. A structural walk alone accepts this semantic change.
+for payload in '15 0 0 0' '15'; do
+    printf '%s\n' \
+        "(mes (meta (engine 'GM) (charset \"pc98\")) (dict)" \
+        " (struct-assign (ref 15 0) (inline $payload)) (end))" \
+        > "$TMP/ambiguous-inline-struct.rkt"
+    "$JUICE" -c -f -o "$TMP/ambiguous-inline-struct.mes" \
+        "$TMP/ambiguous-inline-struct.rkt" \
+        > "$TMP/ambiguous-inline-struct.log" 2>&1 || true
+    test ! -e "$TMP/ambiguous-inline-struct.mes"
+    grep -q 'inline struct payload would decode as a reference source' \
+        "$TMP/ambiguous-inline-struct.log"
+done
+# 0x0f is valid inside an inline payload; only its leading discriminator matters.
+sed 's/(inline 1 2 3)/(inline 14 15 0 16)/' "$TMP/inline-struct.rkt" \
+    > "$TMP/inline-discriminator.rkt"
+"$JUICE" -c -f -o "$TMP/inline-discriminator.mes" "$TMP/inline-discriminator.rkt"
+"$JUICE" -d -f -e GM -o "$TMP/inline-discriminator-output.rkt" \
+    "$TMP/inline-discriminator.mes"
+grep -q '(inline 14 15 0 16)' "$TMP/inline-discriminator-output.rkt"
+"$JUICE" -c -f -o "$TMP/inline-discriminator-output.mes" \
+    "$TMP/inline-discriminator-output.rkt"
+cmp "$TMP/inline-discriminator.mes" "$TMP/inline-discriminator-output.mes"
+sed 's/(inline 1 2 3)/(inline)/' "$TMP/inline-struct.rkt" > "$TMP/empty-inline.rkt"
+"$JUICE" -c -f -o "$TMP/empty-inline.mes" "$TMP/empty-inline.rkt" \
+    > "$TMP/empty-inline.log" 2>&1 || true
+test ! -e "$TMP/empty-inline.mes"
+grep -q 'inline struct payload must not be empty' "$TMP/empty-inline.log"
+
 # Reject hand-written operand shapes that would decode differently, and run
 # the finished byte stream through the walker so EOF control targets cannot be
 # emitted by the compiler.
