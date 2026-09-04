@@ -65,6 +65,7 @@ struct Config {
     // decompile options
     bool decode = true;
     bool resolve = true;
+    std::string gm_source; // Matching source for unambiguous GM call addresses.
     std::optional<ProtagSpec> protag;
 
     // compile options

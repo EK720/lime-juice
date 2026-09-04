@@ -70,6 +70,7 @@ static void print_usage() {
     std::cerr << "  -p, --preset NAME   preset for a specific game; see --show-preset" << std::endl;
     std::cerr << "  -e, --engine TYPE   engine type (AI5*, AI1, ADV, GM)" << std::endl;
     std::cerr << "  -C, --charset NAME  charset encoding (pc98*, english, europe, korean-..)" << std::endl;
+    std::cerr << "  --gm-source PATH   [GM decompile] matching source for call addresses" << std::endl;
     std::cerr << "  -D, --dictbase HEX  [AI5] dictionary base (80*, D0)" << std::endl;
     std::cerr << "  -E, --extraop       [AI5/ADV] support newer opcodes" << std::endl;
     std::cerr << "  --protag SPEC       {decompile} proc/call(s) fused in text" << std::endl;
@@ -413,6 +414,8 @@ int main(int argc, char* argv[]) {
             cfg.dict_base = static_cast<uint8_t>(std::stoul(argv[i], nullptr, 16));
         } else if (arg == "-E" || arg == "--extraop") {
             cfg.extra_op = true;
+        } else if (arg == "--gm-source" && i + 1 < argc) {
+            cfg.gm_source = argv[++i];
         } else if (arg == "--no-decode") {
             cfg.decode = false;
         } else if (arg == "--no-resolve") {
@@ -466,6 +469,15 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
 
+            if (!cfg.gm_source.empty()) {
+                if (paths.size() != 1 || (explicit_engine && cfg.engine != EngineType::GM)) {
+                    std::cerr << "--gm-source requires one GM input file" << std::endl;
+                    return 1;
+                }
+                cfg.engine = EngineType::GM;
+                explicit_engine = true;
+            }
+
             // auto-detect engine from first file
             if (auto_engine && !explicit_engine) {
                 std::ifstream probe(paths[0], std::ios::binary);
@@ -499,6 +511,11 @@ int main(int argc, char* argv[]) {
         }
 
         case Command::Compile: {
+
+            if (!cfg.gm_source.empty()) {
+                std::cerr << "--gm-source is only valid with --decompile" << std::endl;
+                return 1;
+            }
 
             if (auto_engine) {
                 std::cerr << "--auto-engine is only valid with --decompile" << std::endl;

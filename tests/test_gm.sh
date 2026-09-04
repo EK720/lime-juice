@@ -101,6 +101,51 @@ cmp "$TMP/input.mes" "$TMP/output.mes"
     "$TMP/crossed-external-address.rkt"
 test -s "$TMP/crossed-external-address.mes"
 
+# Re-decompilation uses verified source context after growth crosses an MLL
+# target, including the harder case where local and external calls share a value.
+"$JUICE" -d -f --gm-source "$TMP/crossed-external-address.rkt" \
+    -o "$TMP/crossed-context.rkt" "$TMP/crossed-external-address.mes"
+grep -q '(call (address 31010))' "$TMP/crossed-context.rkt"
+"$JUICE" -c -f -o "$TMP/crossed-context.mes" "$TMP/crossed-context.rkt"
+cmp "$TMP/crossed-external-address.mes" "$TMP/crossed-context.mes"
+cat > "$TMP/shared-address.rkt" <<'EOF'
+(mes (meta (engine 'GM) (charset "pc98")) (dict)
+ (call (address 32))
+ (text #:mode 2 "AAAAAAAAAAAAAAAAAAAA")
+ (label 90) (call (local-address 90)) (end))
+EOF
+"$JUICE" -c -f -o "$TMP/shared-address.mes" "$TMP/shared-address.rkt"
+"$JUICE" -d -f --gm-source "$TMP/shared-address.rkt" \
+    -o "$TMP/shared-context.rkt" "$TMP/shared-address.mes"
+grep -q '(call (address 32))' "$TMP/shared-context.rkt"
+grep -q '(call (local-address 32))' "$TMP/shared-context.rkt"
+for source in shared-address shared-context; do
+    sed 's/(dict)/(dict) (text #:mode 2 "X")/' "$TMP/$source.rkt" \
+        > "$TMP/$source-edited.rkt"
+    "$JUICE" -c -f -o "$TMP/$source-edited.mes" "$TMP/$source-edited.rkt"
+done
+cmp "$TMP/shared-address-edited.mes" "$TMP/shared-context-edited.mes"
+# Packed payloads use unpacked field offsets and preserve the same distinction.
+sed "s/(engine 'GM)/(engine 'GM) (compression 'beyond)/" \
+    "$TMP/shared-address.rkt" > "$TMP/shared-packed.rkt"
+"$JUICE" -c -f -o "$TMP/shared-packed.mes" "$TMP/shared-packed.rkt"
+"$JUICE" -d -f --gm-source "$TMP/shared-packed.rkt" \
+    -o "$TMP/shared-packed-context.rkt" "$TMP/shared-packed.mes"
+grep -q '(call (address 32))' "$TMP/shared-packed-context.rkt"
+grep -q '(call (local-address 32))' "$TMP/shared-packed-context.rkt"
+"$JUICE" -c -f -o "$TMP/shared-packed-context.mes" "$TMP/shared-packed-context.rkt"
+cmp "$TMP/shared-packed.mes" "$TMP/shared-packed-context.mes"
+"$JUICE" -d -f --gm-source "$TMP/shared-address-edited.rkt" \
+    -o "$TMP/stale-context.rkt" "$TMP/shared-address.mes" \
+    > "$TMP/stale-context.log" 2>&1 || true
+test ! -e "$TMP/stale-context.rkt"
+grep -q 'source context does not reproduce this MES payload' "$TMP/stale-context.log"
+"$JUICE" -d -f --gm-source "$TMP/absent.rkt" \
+    -o "$TMP/absent-context.rkt" "$TMP/shared-address.mes" \
+    > "$TMP/absent-context.log" 2>&1 || true
+test ! -e "$TMP/absent-context.rkt"
+grep -q 'cannot open source context' "$TMP/absent-context.log"
+
 # Labels make structural edits relocatable too: insert a new node before the
 # continuation without maintaining a parallel span table.
 awk '/\(label 39\)/ { print " (text #:mode 2 \"X\")" } { print }' \

@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace gm {
@@ -235,7 +236,9 @@ void emit_text_raw(ByteWriter& out, const AstNode& node) {
 
 } // namespace
 
-std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
+std::vector<uint8_t> compile_mes(
+    const AstNode& ast, Config& cfg,
+    std::unordered_set<size_t>* external_fields) {
     bool beyond_compression = false;
 
     for (const auto& node : ast.children) {
@@ -314,7 +317,9 @@ std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg) {
         }
     }
     (void)walk_code(code, code_base, known_external_fields);
-    return beyond_compression ? pack_beyond(data) : data;
+    auto result = beyond_compression ? pack_beyond(data) : data;
+    if (external_fields != nullptr) *external_fields = std::move(known_external_fields);
+    return result;
 }
 
 } // namespace gm

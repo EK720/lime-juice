@@ -17,6 +17,11 @@
 //
 
 #include "loader.h"
+#include "compiler.h"
+#include "../../sexp_reader.h"
+
+#include <fstream>
+#include <sstream>
 #include "opener.h"
 #include "semantic.h"
 #include "syntax.h"
@@ -256,7 +261,23 @@ AstNode load_mes(const std::string& path, Config& cfg) {
     nodes.push_back(make_dict(mes.dictionary, cfg, cs));
 
     size_t code_base = 2 + mes.dictionary.size() * 2;
-    auto walk = walk_code(mes.code, code_base);
+    std::unordered_set<size_t> external_fields;
+    if (!cfg.gm_source.empty()) {
+        std::ifstream source(cfg.gm_source);
+        if (!source) throw std::runtime_error("gm: cannot open source context: " + cfg.gm_source);
+        std::ostringstream text;
+        text << source.rdbuf();
+        SexpReader reader;
+        auto ast = reader.parse(text.str());
+        if (!ast.is_list("mes")) throw std::runtime_error("gm: source context must be a mes form");
+        Config source_cfg = cfg;
+        auto expected = open_mes_bytes(compile_mes(ast, source_cfg, &external_fields));
+        // Packing choices do not affect the addresses in the unpacked payload.
+        if (expected.mes.dictionary != mes.dictionary || expected.mes.code != mes.code) {
+            throw std::runtime_error("gm: source context does not reproduce this MES payload");
+        }
+    }
+    auto walk = walk_code(mes.code, code_base, external_fields);
     std::unordered_set<size_t> local_fields;
     std::unordered_set<size_t> local_targets;
 

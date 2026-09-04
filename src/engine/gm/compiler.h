@@ -21,11 +21,16 @@
 #include "../../ast.h"
 #include "../../config.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <unordered_set>
 
 namespace gm {
 
-std::vector<uint8_t> compile_mes(const AstNode& ast, Config& cfg);
+// Optionally return absolute operand fields explicitly marked external.
+std::vector<uint8_t> compile_mes(
+    const AstNode& ast, Config& cfg,
+    std::unordered_set<size_t>* external_fields = nullptr);
 
 } // namespace gm

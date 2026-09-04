@@ -230,8 +230,26 @@ This makes changed-length and structural edits safe.
 
 `address` is a literal external address, commonly an entry point in a loaded
 MLL, and is never relocated. A missing or duplicate local label is a compile
-error. Native targets must land on instruction boundaries, so labels always
+error. Local targets must land on instruction boundaries, so labels always
 appear between complete source nodes.
+
+The binary does not tag call targets as local or external. Without source
+context, decompilation uses the retail convention: targets inside the MES code
+are local, and targets outside it are external. Growing a script can cross an
+external MLL address, making that convention ambiguous. Keep the edited source
+and supply it when decompiling compiled output:
+
+```sh
+juice -c -o translated.mes translated.rkt
+juice -d --gm-source translated.rkt -o checked.rkt translated.mes
+```
+
+`--gm-source` selects GM and recovers external operand fields from that source.
+It first verifies that compiling the source reproduces the entire unpacked MES
+payload; mismatched or stale source is rejected. This works with packed Be-Yond
+files too. It preserves external addresses even when they coincide with local
+instruction boundaries. It does not infer external addresses for arbitrary
+binaries without matching source.
 
 ## Be-Yond retail compression
 
