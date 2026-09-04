@@ -33,9 +33,9 @@ fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CORPUS="$1"
 JUICE="${2:-$ROOT/build/juice}"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/lime-juice-gm-corpus.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/lime-juice-gm-corpus.XXXXXX")"
 CURRENT=""
-trap 'rm -rf "$TMP"' EXIT
+trap 'rm -rf "$WORK"' EXIT
 trap 'echo "GM corpus failure: $CURRENT" >&2' ERR
 
 if [ ! -x "$JUICE" ]; then
@@ -54,6 +54,26 @@ mes_files() {
     fi
 }
 
+# Juice currently catches per-file errors without a nonzero process status.
+# Require fresh output and clean diagnostics from every individual invocation.
+run_juice() {
+    local output="$1"
+    shift
+    rm -f "$output"
+    if ! "$JUICE" "$@" -o "$output" > "$TMP/juice.stdout" 2> "$TMP/juice.stderr"; then
+        cat "$TMP/juice.stdout" "$TMP/juice.stderr" >&2
+        return 1
+    fi
+    if [ -s "$TMP/juice.stderr" ] || [ ! -s "$output" ]; then
+        cat "$TMP/juice.stdout" "$TMP/juice.stderr" >&2
+        echo "juice failed to produce clean output: $output" >&2
+        return 1
+    fi
+}
+
+# Materialize the input list so discovery errors are not lost in a process
+# substitution. Each file also gets an isolated directory for intermediate data.
+mes_files > "$WORK/mes-files"
 files=0
 packed_files=0
 mode1_files=0
@@ -62,12 +82,14 @@ mode1_records=0
 while IFS= read -r -d '' mes; do
     CURRENT="$mes"
     files=$((files + 1))
+    TMP="$WORK/$files"
+    mkdir "$TMP"
 
-    "$JUICE" -d -f --auto-engine -o "$TMP/original.rkt" "$mes" >/dev/null
+    run_juice "$TMP/original.rkt" -d -f --auto-engine "$mes"
     grep -q "(engine 'GM)" "$TMP/original.rkt"
     ! grep -q '(raw ' "$TMP/original.rkt"
 
-    "$JUICE" -c -f -o "$TMP/roundtrip.mes" "$TMP/original.rkt" >/dev/null
+    run_juice "$TMP/roundtrip.mes" -c -f "$TMP/original.rkt"
     first_byte="$(od -An -tu1 -N1 "$mes" | tr -d ' ')"
     if [ "$first_byte" = 255 ]; then
         packed_files=$((packed_files + 1))
@@ -75,10 +97,10 @@ while IFS= read -r -d '' mes; do
 
         # The compressor is deterministic, but intentionally canonical rather
         # than an attempt to reproduce the retail token choices byte-for-byte.
-        "$JUICE" -d -f --auto-engine -o "$TMP/canonical.rkt" \
-            "$TMP/roundtrip.mes" >/dev/null
+        run_juice "$TMP/canonical.rkt" -d -f --gm-source "$TMP/original.rkt" \
+            "$TMP/roundtrip.mes"
         cmp "$TMP/original.rkt" "$TMP/canonical.rkt"
-        "$JUICE" -c -f -o "$TMP/canonical.mes" "$TMP/canonical.rkt" >/dev/null
+        run_juice "$TMP/canonical.mes" -c -f "$TMP/canonical.rkt"
         cmp "$TMP/roundtrip.mes" "$TMP/canonical.mes"
     else
         cmp "$mes" "$TMP/roundtrip.mes"
@@ -103,7 +125,7 @@ while IFS= read -r -d '' mes; do
         exit 1
     fi
 
-    "$JUICE" -c -f -o "$TMP/grown.mes" "$TMP/grown.rkt" >/dev/null
+    run_juice "$TMP/grown.mes" -c -f "$TMP/grown.rkt"
     if [ "$first_byte" != 255 ] && \
        [ "$(wc -c < "$TMP/grown.mes")" -le "$(wc -c < "$mes")" ]; then
         echo "changed-length compile did not grow the MES file" >&2
@@ -111,10 +133,10 @@ while IFS= read -r -d '' mes; do
     fi
 
     # Decompilation runs the complete structural walker and rejects stale local
-    # targets, so this validates every relocated output instruction boundary.
-    "$JUICE" -d -f -e GM -o "$TMP/grown-output.rkt" "$TMP/grown.mes" >/dev/null
+    # targets. Verified source context preserves external calls crossed by growth.
+    run_juice "$TMP/grown-output.rkt" -d -f --gm-source "$TMP/grown.rkt" "$TMP/grown.mes"
     grep -q "(engine 'GM)" "$TMP/grown-output.rkt"
-done < <(mes_files)
+done < "$WORK/mes-files"
 
 if [ "$files" -eq 0 ]; then
     echo "no MES files found in corpus: $CORPUS" >&2
