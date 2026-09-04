@@ -18,11 +18,19 @@
 
 #pragma once
 
-#include "config.h"
+#include "../../ast.h"
 
-#include <cstdint>
 #include <vector>
 
-// detect engine type from raw MES file bytes
-// checks ADV signature, General Message structure, AI5 dictionary structure, then AI1 fallback
-EngineType detect_engine(const std::vector<uint8_t>& bytes);
+namespace gm {
+
+// Fuse exact instruction sequences into the editor-facing GM syntax. The
+// semantic decoder remains one-node-per-instruction; this pass only removes
+// bytecode mechanics whose inverse lowering is unambiguous.
+std::vector<AstNode> fuse_syntax(std::vector<AstNode> nodes);
+
+// Expand editor-facing structured forms back into the exact flat instruction
+// sequence consumed by the semantic encoder.
+std::vector<AstNode> lower_syntax(const std::vector<AstNode>& nodes);
+
+} // namespace gm

@@ -18,11 +18,24 @@
 
 #pragma once
 
-#include "config.h"
+#include "../engine.h"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
-// detect engine type from raw MES file bytes
-// checks ADV signature, General Message structure, AI5 dictionary structure, then AI1 fallback
-EngineType detect_engine(const std::vector<uint8_t>& bytes);
+namespace gm {
+
+struct OpenedMes {
+    MesFile mes;
+    bool beyond_packed = false;
+};
+
+bool is_beyond_packed(const std::vector<uint8_t>& bytes);
+std::vector<uint8_t> unpack_beyond(const std::vector<uint8_t>& bytes);
+std::vector<uint8_t> pack_beyond(const std::vector<uint8_t>& bytes);
+
+OpenedMes open_mes(const std::string& path);
+OpenedMes open_mes_bytes(const std::vector<uint8_t>& bytes);
+
+} // namespace gm

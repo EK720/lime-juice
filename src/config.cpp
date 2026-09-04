@@ -56,7 +56,10 @@ void Config::use_preset(const std::string& name) {
         return;
     }
 
-    if (lower == "angel") {
+    if (lower == "fermion" || lower == "beyond" || lower == "be-yond") {
+        engine = EngineType::GM;
+
+    } else if (lower == "angel") {
         engine = EngineType::AI1;
     } else if (lower == "deja") {
         engine = EngineType::AI1;
@@ -166,6 +169,8 @@ void Config::set_engine(const std::string& name) {
         engine = EngineType::ADV;
     } else if (upper == "AI5WIN") {
         engine = EngineType::AI5WIN;
+    } else if (upper == "GM" || upper == "GENERAL-MESSAGE" || upper == "GENERAL_MESSAGE") {
+        engine = EngineType::GM;
     } else {
         throw std::runtime_error("unknown engine type: " + name);
     }
@@ -233,6 +238,7 @@ std::vector<PresetInfo> get_presets() {
     return {
         {"angel",  "Angel Hearts"},
         {"aishi",  "Ai Shimai"},
+        {"beyond", "Be-Yond: Kurodaishou ni Mirareteru"},
         {"cre",    "Crescent"},
         {"coc",    "Curse of Castle"},
         {"deja",   "De-Ja"},
@@ -244,6 +250,7 @@ std::vector<PresetInfo> get_presets() {
         {"dk3",    "Dragon Knight 3"},
         {"dk4",    "Dragon Knight 4"},
         {"elle",   "ELLE"},
+        {"fermion", "Fermion: Mirai kara no Houmonsha"},
         {"foxy",   "Foxy"},
         {"foxy2",  "Foxy 2"},
         {"isaku",  "Isaku"},

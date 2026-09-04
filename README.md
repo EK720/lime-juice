@@ -10,13 +10,14 @@ A companion tool, **juice-img**, handles the image formats used by the same game
 
 ## Supported Engines
 
-Six engine versions were used across these games. Functionally, they fall into three distinct families:
+Several engine versions were used across these games. Juice currently supports four distinct families:
 
 | Family | Versions | Notes | Game list |
 |--------|----------|-------|-----------|
 | **AI1** | AI1, AI2 | Older engine with simpler bytecode. AI2 is functionally identical to AI1. | [AI1/AI2 games](https://vndb.org/r?q=&o=a&s=title&f=12fgAIfoAI2) |
 | **AI5** | AI4, AI5 | The most common engine. AI4 is functionally identical to AI5. | [AI4/AI5 games](https://vndb.org/r?q=&o=a&s=title&f=12foAI4foAI5) |
 | **ADV** | AI3, ADV | Advanced engine with segment-based structure. ADV forked from AI3; they are functionally equivalent. | [AI3/ADV games](https://vndb.org/r?f=fwADV98V-) |
+| **GM** | General Message | Semantic PC-98 bytecode, structured calls and loops, editable text, and direct Be-Yond retail packing. | *Fermion: Mirai kara no Houmonsha*, *Be-Yond: Kurodaishou ni Mirareteru* |
 
 **AI5WIN**, a Windows port of AI5, also exists but is not currently supported by juice. It shares most of its bytecode format with AI5 but has some Windows-specific differences.
 
@@ -65,7 +66,7 @@ Settings from the preset are stored in the RKT file's `(meta ...)` block, so you
 
 | Flag | Description |
 |------|-------------|
-| `-e`, `--engine TYPE` | Engine type: `AI5` (default), `AI1`, `ADV`. Aliases: `AI2` maps to `AI1`, `AI4` maps to `AI5`, `AI5X` maps to `AI5` with `--dictbase D0 --extraop`. |
+| `-e`, `--engine TYPE` | Engine type: `AI5` (default), `AI1`, `ADV`, `GM`. Aliases: `AI2` maps to `AI1`, `AI4` maps to `AI5`, `AI5X` maps to `AI5` with `--dictbase D0 --extraop`. |
 | `-p`, `--preset NAME` | Apply a named game preset. Overrides engine, charset, and other defaults. See `--show-preset` for the full list. |
 
 ### Character Encoding
@@ -150,6 +151,8 @@ Presets bundle the correct engine, dictionary base, extraop, and protagonist set
 | `dk3` | Dragon Knight 3 | AI5 | protag: proc 26 |
 | `dk4` | Dragon Knight 4 | AI5 | defaults |
 | `elle` | ELLE | AI5 | protag: variable Z |
+| `fermion` | Fermion: Mirai kara no Houmonsha | GM | defaults |
+| `beyond` | Be-Yond: Kurodaishou ni Mirareteru | GM | defaults |
 | `foxy` | Foxy | AI5 | defaults |
 | `foxy2` | Foxy 2 | AI5 | defaults |
 | `isaku` | Isaku | AI5 | dictbase D0, extraop |
@@ -185,6 +188,17 @@ When compiling, juice reads settings from the `(meta ...)` block at the top of t
 ```racket
 (meta (engine 'AI5) (charset "pc98") (extraop #t))
 ```
+
+General Message scripts use `(engine 'GM)`. Retail corpus coverage spans both
+system-1 Rev.95:06:30 games, *Fermion: Mirai kara no Houmonsha* and *Be-Yond:
+Kurodaishou ni Mirareteru*; layouts absent from those scripts are derived from
+their native handlers. Juice reads and writes Be-Yond's retail `0xff`-packed MES
+files directly. Commands, expressions, references, parameters, and text use the
+same concise source conventions as the older engines. Common calls and loops
+are structured; explicit `label` and `local-address` nodes preserve irreducible
+shared control flow across edits.
+See the
+[GM scripting reference](doc/scripting-gm.md).
 
 ### Input/Output Handling
 
@@ -294,6 +308,7 @@ The GPA file may not have an embedded palette. Either provide one with `-p palet
 - [AI5 Scripting Reference](doc/scripting-ai5.md)
 - [AI1 Scripting Reference](doc/scripting-ai1.md)
 - [ADV Scripting Reference](doc/scripting-adv.md)
+- [General Message Scripting Notes](doc/scripting-gm.md)
 - [GP4 Image Format](doc/gp4-ada.md)
 - [GPC/GPA Image Format](doc/gpc-gpa.md)
 

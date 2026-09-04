@@ -28,6 +28,8 @@
 #include "engine/ai1/compiler.h"
 #include "engine/ai5/compiler.h"
 #include "engine/adv/compiler.h"
+#include "engine/gm/loader.h"
+#include "engine/gm/compiler.h"
 
 #include <filesystem>
 #include <fstream>
@@ -66,8 +68,9 @@ static void print_usage() {
     std::cerr << "  -f, --force         force overwrite output files" << std::endl;
     std::cerr << "  -o, --output PATH   output file path (default: input with swapped extension)" << std::endl;
     std::cerr << "  -p, --preset NAME   preset for a specific game; see --show-preset" << std::endl;
-    std::cerr << "  -e, --engine TYPE   engine type (AI5*, AI1, ADV)" << std::endl;
+    std::cerr << "  -e, --engine TYPE   engine type (AI5*, AI1, ADV, GM)" << std::endl;
     std::cerr << "  -C, --charset NAME  charset encoding (pc98*, english, europe, korean-..)" << std::endl;
+    std::cerr << "  --gm-source PATH   [GM decompile] matching source for call addresses" << std::endl;
     std::cerr << "  -D, --dictbase HEX  [AI5] dictionary base (80*, D0)" << std::endl;
     std::cerr << "  -E, --extraop       [AI5/ADV] support newer opcodes" << std::endl;
     std::cerr << "  --protag SPEC       {decompile} proc/call(s) fused in text" << std::endl;
@@ -186,6 +189,8 @@ static void decompile_file(const std::string& path, Config& cfg, bool force,
             }
         } else if (cfg.engine == EngineType::AI1) {
             ast = ai1::load_mes(path, cfg);
+        } else if (cfg.engine == EngineType::GM) {
+            ast = gm::load_mes(path, cfg);
         } else {
             ast = ai5::load_mes(path, cfg);
         }
@@ -326,6 +331,10 @@ static void compile_file(const std::string& path, Config& cfg, bool force,
 
         // auto-wrap text to fit text-frame widths
         if (wrap) {
+            if (compile_cfg.engine == EngineType::GM) {
+                throw std::runtime_error(
+                    "--auto-wrap is not supported for GM scripts");
+            }
             auto_wrap_ast(ast);
         }
 
@@ -338,6 +347,8 @@ static void compile_file(const std::string& path, Config& cfg, bool force,
             compiled = ai1::compile_mes(ast, compile_cfg);
         } else if (compile_cfg.engine == EngineType::AI5) {
             compiled = ai5::compile_mes(ast, compile_cfg);
+        } else if (compile_cfg.engine == EngineType::GM) {
+            compiled = gm::compile_mes(ast, compile_cfg);
         } else {
             throw std::runtime_error("compiler not implemented for this engine");
         }
@@ -403,6 +414,8 @@ int main(int argc, char* argv[]) {
             cfg.dict_base = static_cast<uint8_t>(std::stoul(argv[i], nullptr, 16));
         } else if (arg == "-E" || arg == "--extraop") {
             cfg.extra_op = true;
+        } else if (arg == "--gm-source" && i + 1 < argc) {
+            cfg.gm_source = argv[++i];
         } else if (arg == "--no-decode") {
             cfg.decode = false;
         } else if (arg == "--no-resolve") {
@@ -456,6 +469,15 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
 
+            if (!cfg.gm_source.empty()) {
+                if (paths.size() != 1 || (explicit_engine && cfg.engine != EngineType::GM)) {
+                    std::cerr << "--gm-source requires one GM input file" << std::endl;
+                    return 1;
+                }
+                cfg.engine = EngineType::GM;
+                explicit_engine = true;
+            }
+
             // auto-detect engine from first file
             if (auto_engine && !explicit_engine) {
                 std::ifstream probe(paths[0], std::ios::binary);
@@ -474,6 +496,7 @@ int main(int argc, char* argv[]) {
 
                 if (cfg.engine == EngineType::ADV) { engine_name = "ADV"; }
                 else if (cfg.engine == EngineType::AI1) { engine_name = "AI1"; }
+                else if (cfg.engine == EngineType::GM) { engine_name = "GM"; }
                 else { engine_name = "AI5"; }
 
                 print_color("b-cyan", "auto-engine: " + engine_name);
@@ -488,6 +511,11 @@ int main(int argc, char* argv[]) {
         }
 
         case Command::Compile: {
+
+            if (!cfg.gm_source.empty()) {
+                std::cerr << "--gm-source is only valid with --decompile" << std::endl;
+                return 1;
+            }
 
             if (auto_engine) {
                 std::cerr << "--auto-engine is only valid with --decompile" << std::endl;

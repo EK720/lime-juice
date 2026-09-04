@@ -39,7 +39,8 @@ SexpWriter::Style SexpWriter::get_style(const std::string& tag) const {
     }
 
     if (tag == "set-arr~" || tag == "set-arr~b" || tag == "set-arr~c" || tag == "set-arr~d" ||
-        tag == "set-reg:" || tag == "set-reg::" || tag == "set-reg:d" || tag == "set-var") {
+        tag == "set-reg:" || tag == "set-reg::" || tag == "set-reg:d" || tag == "set-var" ||
+        tag == "assign") {
         return Style::Set;
     }
 
@@ -191,6 +192,7 @@ void SexpWriter::write_list(std::string& out, const AstNode& node, int indent) {
 
             break;
 
+        case Style::Inline:
         case Style::Default: {
             // greedy word-wrap: pack children onto lines until width exceeded
             int col;

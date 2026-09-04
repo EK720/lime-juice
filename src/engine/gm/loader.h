@@ -18,11 +18,16 @@
 
 #pragma once
 
-#include "config.h"
+#include "../../ast.h"
+#include "../../config.h"
 
-#include <cstdint>
-#include <vector>
+#include <string>
 
-// detect engine type from raw MES file bytes
-// checks ADV signature, General Message structure, AI5 dictionary structure, then AI1 fallback
-EngineType detect_engine(const std::vector<uint8_t>& bytes);
+namespace gm {
+
+// Decode a General Message MES file into semantic commands. Retail Be-Yond
+// files are unpacked transparently and retain their compression setting in
+// metadata for recompilation.
+AstNode load_mes(const std::string& path, Config& cfg);
+
+} // namespace gm

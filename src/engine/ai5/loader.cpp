@@ -501,6 +501,7 @@ static AstNode fuse_meta(const AstNode& node, const Config& cfg) {
         case EngineType::AI1: engine_name = "AI1"; break;
         case EngineType::ADV: engine_name = "ADV"; break;
         case EngineType::AI5WIN: engine_name = "AI5WIN"; break;
+        case EngineType::GM: engine_name = "GM"; break;
     }
 
     meta_entries.push_back(AstNode::make_list("engine", {

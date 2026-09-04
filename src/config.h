@@ -29,7 +29,8 @@ enum class EngineType {
     AI5,
     AI1,
     ADV,
-    AI5WIN
+    AI5WIN,
+    GM
 };
 
 // protagonist fusion specification
@@ -64,6 +65,7 @@ struct Config {
     // decompile options
     bool decode = true;
     bool resolve = true;
+    std::string gm_source; // Matching source for unambiguous GM call addresses.
     std::optional<ProtagSpec> protag;
 
     // compile options

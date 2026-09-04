@@ -18,11 +18,33 @@
 
 #pragma once
 
-#include "config.h"
-
+#include <cstddef>
 #include <cstdint>
+#include <unordered_set>
 #include <vector>
 
-// detect engine type from raw MES file bytes
-// checks ADV signature, General Message structure, AI5 dictionary structure, then AI1 fallback
-EngineType detect_engine(const std::vector<uint8_t>& bytes);
+namespace gm {
+
+struct InstructionSpan {
+    size_t start;
+    size_t end;
+    uint8_t opcode;
+};
+
+struct LocalRelocation {
+    size_t field;
+    uint16_t target;
+};
+
+struct WalkResult {
+    std::vector<InstructionSpan> instructions;
+    std::vector<LocalRelocation> relocations;
+};
+
+// Decode the complete GM instruction stream. All returned positions are
+// absolute MES file offsets, including the dictionary/header prefix.
+WalkResult walk_code(
+    const std::vector<uint8_t>& code, size_t code_base,
+    const std::unordered_set<size_t>& known_external_fields = {});
+
+} // namespace gm

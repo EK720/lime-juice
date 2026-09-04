@@ -18,11 +18,19 @@
 
 #pragma once
 
-#include "config.h"
+#include "../../ast.h"
+#include "../../config.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <unordered_set>
 
-// detect engine type from raw MES file bytes
-// checks ADV signature, General Message structure, AI5 dictionary structure, then AI1 fallback
-EngineType detect_engine(const std::vector<uint8_t>& bytes);
+namespace gm {
+
+// Optionally return absolute operand fields explicitly marked external.
+std::vector<uint8_t> compile_mes(
+    const AstNode& ast, Config& cfg,
+    std::unordered_set<size_t>* external_fields = nullptr);
+
+} // namespace gm
