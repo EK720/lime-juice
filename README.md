@@ -231,6 +231,20 @@ When compiling, juice reads settings from the `(meta ...)` block at the top of t
 
 ---
 
+## Exit Status
+
+Both tools exit with `0` after successful processing, or when displaying help,
+version information, or presets. They exit with `1` for invalid usage or a
+processing error, including refusing to overwrite an existing output. Batch
+commands continue processing remaining files and exit with `1` if any file
+failed. Warnings alone do not change the exit status.
+
+Run the exit-status regression checks after building:
+
+```bash
+python3 tests/test_exit_codes.py build
+```
+
 ## Building from Source
 
 ### Requirements
